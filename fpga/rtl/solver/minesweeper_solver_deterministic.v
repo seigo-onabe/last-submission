@@ -8,7 +8,7 @@ module minesweeper_solver_deterministic #(
     parameter MAX_CELLS = 361,
     parameter ENABLE_CORNER_ON_STALL = 1,
     parameter ENABLE_CONSTRAINT_COLLECTOR = 1,
-    parameter MAX_COLLECTOR_CONSTRAINTS = 4,
+    parameter MAX_COLLECTOR_CONSTRAINTS = 8,
     parameter ENABLE_PROBABILITY_FEEDBACK = 1,
     parameter MAX_PROBABILITY_GUESSES = 4,
     parameter ENABLE_ADAPTIVE_FEEDBACK = 0,
