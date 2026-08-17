@@ -38,6 +38,8 @@ fpga/
 
 ## Quartusコンパイル
 
+Quartus Prime Lite 24.1std エディションを使用しています。
+
 ```powershell
 quartus_sh --flow compile .\fpga\quartus\minesweeper_submission_local_mu500
 ```

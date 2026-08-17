@@ -1,0 +1,11 @@
+diff <(sed -n '1,12398p' ../software/board_pack_10000_prog.txt) board01.txt
+diff <(sed -n '12399,24789p' ../software/board_pack_10000_prog.txt) board02.txt
+diff <(sed -n '24790,37178p' ../software/board_pack_10000_prog.txt) board03.txt
+diff <(sed -n '37179,49566p' ../software/board_pack_10000_prog.txt) board04.txt
+diff <(sed -n '49567,61950p' ../software/board_pack_10000_prog.txt) board05.txt
+diff <(sed -n '61951,74333p' ../software/board_pack_10000_prog.txt) board06.txt
+diff <(sed -n '74334,86725p' ../software/board_pack_10000_prog.txt) board07.txt
+diff <(sed -n '86726,99121p' ../software/board_pack_10000_prog.txt) board08.txt
+diff <(sed -n '99122,111515p' ../software/board_pack_10000_prog.txt) board09.txt
+diff <(sed -n '111516,123913p' ../software/board_pack_10000_prog.txt) board10.txt
+diff <(sed -n '123914,135416p' ../software/board_pack_10000_prog.txt) board11.txt

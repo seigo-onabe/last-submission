@@ -1,8 +1,4 @@
 #pragma GCC optimize("unroll-loops")
-// 標準入力からの盤面読み込みは行わない，代わりに固定の "board.txt" を読み込む
-// ADC 2026 paiza.IO optimized submission: C++17 / stdin / 1750 ms internal limit
-// Fast input, complete probability, 75k-node cap for large dense boards,
-// and runtime hardware_concurrency() check for up to 2 worker threads.
 #define MINESWEEPER_SUBMISSION 1
 
 #include <array>
@@ -27,8 +23,8 @@
 #include <iostream>
 #include <string_view>
 
-// ===== include\minesweeper\model.hpp =====
 
+// ===== model =====
 
 namespace minesweeper {
 
@@ -87,16 +83,11 @@ struct BoardResult {
 
 }  // namespace minesweeper
 
-// ===== include\minesweeper\board_io.hpp =====
 
-
+// ===== board_io =====
 
 namespace minesweeper {
 
-// ファイル全体を一度に読み込んだバッファ上をポインタでなめるだけの
-// 軽量パーサ(read_fast.cpp の FastReader を移植)。
-// istream::operator>> の逐次呼び出し(sentry/locale絡みのオーバーヘッドが
-// 呼び出しごとに発生する)を避けるために導入している。
 class FastReader {
  public:
   explicit FastReader(std::string buffer)
@@ -117,8 +108,7 @@ class FastReader {
   const char* end_;
 };
 
-// 標準入力またはファイルの内容を一度に読み込む(read_fast.cpp の
-// readEntireFile を移植)。
+// 標準入力またはファイルの内容を一度に読み込む
 std::string readEntireFile(std::istream& input);
 
 // 次の盤面を読み込む。正常なEOFではfalse、不正入力では例外を返す。
@@ -126,9 +116,8 @@ bool readBoard(FastReader& reader, Board& board);
 
 }  // namespace minesweeper
 
-// ===== include\minesweeper\query_engine.hpp =====
 
-
+// ===== query_engine =====
 
 namespace minesweeper {
 
@@ -151,9 +140,8 @@ class QueryEngine {
 
 }  // namespace minesweeper
 
-// ===== include\minesweeper\probability_engine.hpp =====
 
-
+// ===== probability_engine =====
 
 namespace minesweeper {
 
@@ -177,9 +165,8 @@ class ProbabilityEngine {
 
 }  // namespace minesweeper
 
-// ===== include\minesweeper\scoring.hpp =====
 
-
+// ===== scoring =====
 
 namespace minesweeper {
 
@@ -191,9 +178,8 @@ void printScaledScore(std::ostream& output, std::int64_t score_scaled);
 
 }  // namespace minesweeper
 
-// ===== include\minesweeper\solver.hpp =====
 
-
+// ===== solver =====
 
 namespace minesweeper {
 
@@ -261,8 +247,8 @@ class Solver {
 
 }  // namespace minesweeper
 
-// ===== src\board_io.cpp =====
 
+// ===== board_io body =====
 
 namespace minesweeper {
 
@@ -383,7 +369,8 @@ bool readBoard(FastReader& reader, Board& board) {
 
 }  // namespace minesweeper
 
-// ===== src\query_engine.cpp =====
+
+// ===== query_engine body =====
 
 namespace minesweeper {
 
@@ -442,8 +429,8 @@ int QueryEngine::openedMines() const { return opened_mines_; }
 
 }  // namespace minesweeper
 
-// ===== src\probability_engine.cpp =====
 
+// ===== probability_engine body =====
 
 namespace minesweeper {
 namespace {
@@ -981,9 +968,8 @@ GuessDecision ProbabilityEngine::chooseCell(
 
 }  // namespace minesweeper
 
-// ===== src\scoring.cpp =====
 
-
+// ===== scoring body =====
 
 namespace minesweeper {
 
@@ -1010,7 +996,8 @@ void printScaledScore(std::ostream& output, std::int64_t score_scaled) {
 
 }  // namespace minesweeper
 
-// ===== src\solver.cpp =====
+
+// ===== solver body =====
 
 namespace minesweeper {
 
@@ -1022,9 +1009,7 @@ SolverStatistics Solver::solve(QueryEngine& query_engine) {
   openInitialCorner(query_engine, statistics);
 
   while (true) {
-    // すでに安全と確定したセルは、新しい決定論スキャンより先に開く。
-    // キューが空になるまで確定済みセルを消化することで、同じ盤面状態に
-    // 対する制約再構築と部分集合比較の重複を避ける。
+    // すでに安全と確定したセルは、新しい決定論スキャンより先に開く
     const int queued_safe_cell = popSafeCell();
     if (queued_safe_cell >= 0) {
       applyReveals(query_engine.select(queued_safe_cell));
@@ -1053,7 +1038,7 @@ SolverStatistics Solver::solve(QueryEngine& query_engine) {
     }
     // 情報価値を加味した期待得点が負なら、これ以上の推測は不利と判断して
     // 打ち切る(密度が低く、かつ盤面がある程度大きい・半分以上開いている
-    // 場合にのみ適用する早期打ち切りヒューリスティック)。
+    // 場合にのみ適用する)。
     if (cellCount() > 200 && total_mines_ * 100 < cellCount() * 20 &&
         opened_safe_ * 2 >= cellCount() - total_mines_) {
       const int unknown_neighbors =
@@ -1094,25 +1079,11 @@ void Solver::openInitialCorner(QueryEngine& query_engine,
   ++statistics.guesses;
   applyGuess(query_engine, first_cell);
 
-  // (0,0)が地雷だった場合、地雷確率はどのマスでも変わらないため、
-  // 追加の隅開けは行わず既存フロー（決定論的伝播→確率フェーズ）に委ねる。
-  // (0,0)が0（クルー0）だった場合、QueryEngine::selectが内部で連鎖開放を
-  // 既に行っているため、そのまま既存フローで良い。
   if (states_[first_cell] == CellState::kOpenMine ||
       clues_[first_cell] == 0) {
     return;
   }
 
-  // (0,0)が0以外の安全マスだった場合、そのマス周辺のマスは
-  // 「(0,0)が地雷でなかった」という情報から相対的に地雷である確率が
-  // 高くなりやすく、そこを確率フェーズの初手として選ぶ根拠は薄い。
-  // そこで、残り3隅を1つずつ順に開け、0（連鎖開放）が出るか確認する。
-  // ただし3隅を無条件に全部開けると、それだけで地雷を踏むリスクが
-  // 単純計算で約3倍に増えてしまうため、次のいずれかが起きた時点で
-  // ただちに打ち切り、以降の判断は既存フロー（確率フェーズ）に委ねる。
-  //   - クルー0（連鎖開放）が出た → 大きな安全領域が無料で開いたので満足
-  //   - 地雷を引いた → すでにリスクが実現しており、これ以上の
-  //     盲目的な隅開けを正当化する根拠がない
   openRemainingCorners(query_engine, statistics);
 }
 
@@ -1141,13 +1112,13 @@ void Solver::openRemainingCorners(QueryEngine& query_engine,
     ++statistics.guesses;
     applyGuess(query_engine, corner);
 
-    // クルー0（連鎖開放）または地雷を引いた時点で打ち切り、
+    // 0（連鎖開放）または地雷を引いた時点で打ち切り、
     // 以降の判断は既存フロー（決定論的伝播→確率フェーズ）に委ねる。
     if (states_[corner] == CellState::kOpenMine ||
         clues_[corner] == 0) {
       return;
     }
-    // クルー≠0（安全だが連鎖なし）の場合のみ、次の隅を試す。
+    // 安全だが連鎖なしの場合のみ、次の隅を試す。
   }
 }
 
@@ -1188,7 +1159,7 @@ void Solver::propagateDeterministicRules() {
     changed = false;
     constraint_count_ = 0;
 
-    // 同じ盤面状態から制約のスナップショットを作る。
+    // 制約のスナップショットを作る。
     for (int cell = 0; cell < cellCount(); ++cell) {
       if (states_[cell] != CellState::kOpenSafe) {
         continue;
@@ -1388,7 +1359,8 @@ int Solver::popSafeCell() {
 
 }  // namespace minesweeper
 
-// ===== src\main.cpp =====
+
+// ===== main =====
 
 namespace minesweeper {
 
@@ -1431,11 +1403,6 @@ int main(int argc, char** argv) {
 
     const auto start = Clock::now();
 
-    // ---- 盤面読み込み（シーケンシャル） ----
-    // ファイル全体(または標準入力全体)を一度だけ読み込み、以降は
-    // メモリ上のバッファを FastReader でなめるだけにする
-    // (istream::operator>> の逐次呼び出しオーバーヘッドを避けるため)。
-    // 並列化はSolver実行のみを対象とする点は変更なし。
     std::string file_buffer;
     if (!options.input_path.empty()) {
       std::ifstream input_file(options.input_path, std::ios::binary);
