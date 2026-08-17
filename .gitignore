@@ -1,0 +1,8 @@
+# Quartus Prime のローカル作業領域・コンパイル中間生成物
+fpga/quartus/db/
+fpga/quartus/incremental_db/
+fpga/quartus/output_*/
+fpga/quartus/*.qws
+
+# Quartus がプロジェクト直下に生成する補助ファイル
+fpga/quartus/*.bak
