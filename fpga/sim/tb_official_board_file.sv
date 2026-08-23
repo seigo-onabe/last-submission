@@ -318,6 +318,8 @@ module tb_official_board_file #(
         .cfg_total_mines(cfg_total_mines),
         .load_valid(load_valid), .load_ready(load_ready),
         .load_index(load_index), .load_value(load_value),
+        .batch_begin(1'b0), .batch_expected_boards(16'd0),
+        .batch_end(1'b0), .demo_error(1'b0),
         .start_solver(start_solver), .solver_busy(solver_busy),
         .solver_done(solver_done), .solver_stalled(solver_stalled),
         .result_valid(result_valid),

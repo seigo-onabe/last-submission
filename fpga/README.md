@@ -55,3 +55,29 @@ quartus_stp -t fpga/sim/jtag_official_runner.tcl `
   fpga/official/board_pack_1000_fpga.txt `
   fpga/hardware_1000.csv 1000 0 fast
 ```
+
+## 本番デモ表示
+
+7セグは4行×16桁を次の固定レイアウトで使用します。英字は7セグ向けの
+近似字体です。
+
+```text
+boArd 1000 donE
+FULL0862PArt0138
+ CYCLE  81110615
+ SCORE  0903.8487
+```
+
+- `boArd`: 処理済み盤面数と `UAIt` / `run` / `donE` / `Err`
+- `FULL`: 全安全セルを開けた盤面数
+- `PArt`: 完全解答に至らなかった盤面数（`boArd - FULL`）
+- `CYCLE`: 累計ソルバーサイクル（8桁超過時は `--------`）
+- `SCORE`: 累計スコア（小数4桁）
+
+通常LEDは、待機中は中央のHeartbeat、実行中は64段階の蛇行プログレス、
+完了時は外周・内側・全灯の順で演出します。エラー時はチェッカーボードを
+交互点滅します。
+
+JTAGプロトコルv3では、ランナーが実行前に総盤面数を通知し、最終結果の
+ACK後にバッチ終了を通知します。これにより、1盤・1000盤のどちらでも
+同じSOFで正確な進捗と完了演出を行えます。

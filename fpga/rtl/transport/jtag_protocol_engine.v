@@ -23,6 +23,9 @@ module jtag_protocol_engine #(
     output reg [3:0]  cell_value,
     output reg        commit_valid,
     input  wire       commit_ready,
+    output reg        batch_begin,
+    output reg [15:0] batch_expected_boards,
+    output reg        batch_end,
 
     input  wire       solver_busy,
     input  wire       result_available,
@@ -51,6 +54,8 @@ module jtag_protocol_engine #(
     localparam OP_VERSION  = 4'h8;
     localparam OP_PING     = 4'h9;
     localparam OP_RESULT_C = 4'hA;
+    localparam OP_BATCH_BEGIN = 4'hB;
+    localparam OP_BATCH_END   = 4'hC;
 
     localparam EX_IDLE   = 2'd0;
     localparam EX_BEGIN  = 2'd1;
@@ -104,7 +109,12 @@ module jtag_protocol_engine #(
             cell_ordinal <= 0;
             cell_value <= 0;
             commit_valid <= 0;
+            batch_begin <= 0;
+            batch_expected_boards <= 0;
+            batch_end <= 0;
             result_ack <= 0;
+            batch_begin <= 0;
+            batch_end <= 0;
             transport_error <= 0;
             data_remaining <= 0;
             data_values <= 0;
@@ -150,7 +160,7 @@ module jtag_protocol_engine #(
                         case (command_word[63:60])
                             OP_NOP, OP_STATUS: set_status();
                             OP_VERSION:
-                                response_word <= {4'hB, BUILD_ID, 8'd2, 8'd0, 28'd0};
+                                response_word <= {4'hB, BUILD_ID, 8'd3, 8'd0, 28'd0};
                             OP_PING:
                                 response_word <= {4'hD,
                                     command_word[59:0] ^ 60'h5A5A5A5A5A5A5A5};
@@ -205,6 +215,11 @@ module jtag_protocol_engine #(
                             OP_RESULT_C:
                                 response_word <= {4'hE, result_selections,
                                                   result_stalled, 50'd0};
+                            OP_BATCH_BEGIN: begin
+                                batch_expected_boards <= command_word[15:0];
+                                batch_begin <= 1;
+                            end
+                            OP_BATCH_END: batch_end <= 1;
                             OP_ACK: begin
                                 if (result_available)
                                     result_ack <= 1;

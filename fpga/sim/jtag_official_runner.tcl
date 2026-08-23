@@ -174,6 +174,10 @@ set rc [catch {
     }
     set build_id [expr {($version >> 44) & 0xffff}]
     set protocol_version [expr {($version >> 36) & 0xff}]
+    if {$protocol_version < 3} {
+        error "demo batch protocol requires FPGA protocol version 3 or newer"
+    }
+    post_command $instance_index [expr {(11 << 60) | ([llength $boards] & 0xffff)}]
 
     foreach board $boards {
         lassign $board w h mines name cells
@@ -277,6 +281,9 @@ set rc [catch {
             puts "JTAG progress: $completed/[llength $boards] boards"
         }
     }
+    post_command $instance_index [expr {12 << 60}]
+    after 10
+    wait_engine_idle $instance_index 5000
 } message options]
 
 device_unlock

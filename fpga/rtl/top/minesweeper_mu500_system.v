@@ -28,6 +28,10 @@ module minesweeper_mu500_system #(
     input  wire [8:0] load_index,
     input  wire [3:0] load_value,
     input  wire       start_solver,
+    input  wire       batch_begin,
+    input  wire [15:0] batch_expected_boards,
+    input  wire       batch_end,
+    input  wire       demo_error,
 
     output wire       solver_busy,
     output wire       solver_done,
@@ -78,6 +82,8 @@ module minesweeper_mu500_system #(
     wire [15:0] current_board_number;
     wire current_fully_solved;
     wire [63:0] led_bitmap;
+    wire batch_active;
+    wire batch_done;
 
     assign protocol_error = core_error | metrics_error;
     assign current_board_number = boards_processed +
@@ -90,13 +96,6 @@ module minesweeper_mu500_system #(
                          result_seen ? 4'd5 :
                          configured ? 4'd2 :
                          loading_seen ? 4'd1 : 4'd0;
-    assign led_bitmap = {
-        48'd0,
-        done_toggle, display_overflow, (current_mines != 0), speed_setting,
-        solver_stalled, current_fully_solved, run_enable, protocol_error, result_seen,
-        solver_busy, loading_seen, configured, heartbeat
-    };
-
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             active_width <= 5'd0;
@@ -208,15 +207,20 @@ module minesweeper_mu500_system #(
         .clk(clk), .reset(reset),
         .boards_processed(boards_processed),
         .boards_fully_solved(boards_fully_solved),
-        .current_board_number(current_board_number),
-        .selections(current_selections),
-        .opened_safe(current_safe), .opened_mines(current_mines),
-        .board_width(active_width), .board_height(active_height),
-        .total_mines(active_mines), .status_code(status_code),
-        .current_cycles(current_cycles), .total_cycles(total_cycles),
-        .current_score_scaled(current_score_scaled),
+        .total_cycles(total_cycles),
         .total_score_scaled(total_score_scaled),
+        .batch_active(batch_active), .batch_done(batch_done),
+        .display_error(protocol_error | demo_error),
         .segments(digit_segments), .overflow(display_overflow)
+    );
+
+    minesweeper_demo_leds u_demo_leds (
+        .clk(clk), .reset(reset), .heartbeat(heartbeat),
+        .batch_begin(batch_begin), .expected_boards(batch_expected_boards),
+        .board_complete(result_valid), .batch_end(batch_end),
+        .error_active(protocol_error | demo_error),
+        .overflow_active(display_overflow | solver_stalled),
+        .led_bitmap(led_bitmap), .batch_active(batch_active), .batch_done(batch_done)
     );
 
     mu500_7seg_latch_driver u_display (

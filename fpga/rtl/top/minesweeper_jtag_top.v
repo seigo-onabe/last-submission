@@ -53,6 +53,8 @@ module minesweeper_jtag_top #(
     wire [3:0] jtag_cell_value;
     wire jtag_commit_valid, jtag_commit_ready;
     wire jtag_result_ack;
+    wire jtag_batch_begin, jtag_batch_end;
+    wire [15:0] jtag_batch_expected_boards;
 
     wire source_begin_valid = use_rom ? rom_begin_valid : jtag_begin_valid;
     wire source_begin_ready;
@@ -152,6 +154,9 @@ module minesweeper_jtag_top #(
         .cell_valid(jtag_cell_valid), .cell_ready(jtag_cell_ready),
         .cell_ordinal(jtag_cell_ordinal), .cell_value(jtag_cell_value),
         .commit_valid(jtag_commit_valid), .commit_ready(jtag_commit_ready),
+        .batch_begin(jtag_batch_begin),
+        .batch_expected_boards(jtag_batch_expected_boards),
+        .batch_end(jtag_batch_end),
         .solver_busy(solver_busy), .result_available(result_available),
         .result_board_id(result_board_id), .result_width(result_width),
         .result_height(result_height), .result_total_mines(result_total_mines),
@@ -201,6 +206,10 @@ module minesweeper_jtag_top #(
         .load_valid(load_valid), .load_ready(load_ready),
         .load_index(load_index), .load_value(load_value),
         .start_solver(start_solver), .solver_busy(solver_busy),
+        .batch_begin(jtag_batch_begin),
+        .batch_expected_boards(jtag_batch_expected_boards),
+        .batch_end(jtag_batch_end),
+        .demo_error(stream_error | jtag_transport_error | result_overflow),
         .solver_done(solver_done), .solver_stalled(solver_stalled),
         .result_valid(core_result_valid),
         .protocol_error(core_error), .boards_processed(boards_processed),

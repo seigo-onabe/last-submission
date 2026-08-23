@@ -20,6 +20,7 @@ rtl/control/solver_speed_control.v
 rtl/metrics/unsigned_divider.v
 rtl/metrics/minesweeper_metrics.v
 rtl/display/minesweeper_display_formatter.v
+rtl/display/minesweeper_demo_leds.v
 rtl/display/mu500_7seg_latch_driver.v
 rtl/top/minesweeper_mu500_system.v
 rtl/transport/board_stream_controller.v
