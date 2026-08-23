@@ -1,0 +1,2 @@
+board_index,board_name,width,height,total_mines,selections,opened_safe,opened_mines,cycles,cfg_cycles,load_cycles,solver_cycles,score_cycles,total_board_cycles,score_numerator,score_denominator,score_scaled,score,board_crc,jtag_retries,transport_error,protocol_version,build_id,solver_stalled
+1,board_8x14_27_1_none,8,14,27,62,85,2,48689,0,0,48689,0,48689,2125,2295,9259,0.9259,2774,0,0,5,0001,0

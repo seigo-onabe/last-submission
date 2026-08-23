@@ -47,6 +47,11 @@ module minesweeper_mu500_system #(
     output wire [8:0] current_selections,
     output wire [31:0] current_cycles,
     output wire [63:0] total_cycles,
+    output wire [2:0] demo_led_state,
+    output wire [15:0] demo_completed_count,
+    output wire [15:0] demo_expected_boards,
+    output wire demo_batch_active,
+    output wire demo_batch_done,
 
     output wire [7:0] SEG_A,
     output wire [7:0] SEG_B,
@@ -84,6 +89,8 @@ module minesweeper_mu500_system #(
     wire [63:0] led_bitmap;
     wire batch_active;
     wire batch_done;
+    assign demo_batch_active = batch_active;
+    assign demo_batch_done = batch_done;
 
     assign protocol_error = core_error | metrics_error;
     assign current_board_number = boards_processed +
@@ -218,9 +225,12 @@ module minesweeper_mu500_system #(
         .clk(clk), .reset(reset), .heartbeat(heartbeat),
         .batch_begin(batch_begin), .expected_boards(batch_expected_boards),
         .board_complete(result_valid), .batch_end(batch_end),
-        .error_active(protocol_error | demo_error),
-        .overflow_active(display_overflow | solver_stalled),
-        .led_bitmap(led_bitmap), .batch_active(batch_active), .batch_done(batch_done)
+        .error_active(protocol_error | demo_error | display_overflow),
+        .overflow_active(1'b0),
+        .led_bitmap(led_bitmap), .batch_active(batch_active), .batch_done(batch_done),
+        .debug_state(demo_led_state),
+        .debug_completed_count(demo_completed_count),
+        .debug_expected_boards(demo_expected_boards)
     );
 
     mu500_7seg_latch_driver u_display (

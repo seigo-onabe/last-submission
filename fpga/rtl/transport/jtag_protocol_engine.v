@@ -40,6 +40,11 @@ module jtag_protocol_engine #(
     input  wire [31:0] result_cycles,
     input  wire signed [31:0] result_score_scaled,
     input  wire       result_protocol_error,
+    input  wire [2:0] demo_led_state,
+    input  wire       demo_batch_active,
+    input  wire       demo_batch_done,
+    input  wire [15:0] demo_completed_count,
+    input  wire [15:0] demo_expected_boards,
     output reg        result_ack,
     output reg        transport_error
 );
@@ -56,6 +61,7 @@ module jtag_protocol_engine #(
     localparam OP_RESULT_C = 4'hA;
     localparam OP_BATCH_BEGIN = 4'hB;
     localparam OP_BATCH_END   = 4'hC;
+    localparam OP_DEMO_STATUS = 4'hD;
 
     localparam EX_IDLE   = 2'd0;
     localparam EX_BEGIN  = 2'd1;
@@ -67,6 +73,7 @@ module jtag_protocol_engine #(
     reg [43:0] data_values;
     reg [15:0] running_crc;
     reg crc_error;
+    reg [1:0] batch_state;
 
     assign command_ready = (exec_state == EX_IDLE);
 
@@ -87,7 +94,7 @@ module jtag_protocol_engine #(
         begin
             response_word <= {
                 4'hA, BUILD_ID,
-                8'd0,
+                6'd0, batch_state,
                 1'b0, transport_error, crc_error, result_protocol_error,
                 result_available, solver_busy,
                 (exec_state != EX_IDLE), begin_ready,
@@ -113,15 +120,17 @@ module jtag_protocol_engine #(
             batch_expected_boards <= 0;
             batch_end <= 0;
             result_ack <= 0;
-            batch_begin <= 0;
-            batch_end <= 0;
             transport_error <= 0;
             data_remaining <= 0;
             data_values <= 0;
             running_crc <= 16'hFFFF;
             crc_error <= 0;
+            batch_state <= 0;
         end else begin
             result_ack <= 0;
+            // BATCH_BEGIN is a one-cycle event.  BATCH_END intentionally
+            // remains asserted until the next BATCH_BEGIN.
+            batch_begin <= 0;
 
             case (exec_state)
                 EX_BEGIN: begin
@@ -160,7 +169,7 @@ module jtag_protocol_engine #(
                         case (command_word[63:60])
                             OP_NOP, OP_STATUS: set_status();
                             OP_VERSION:
-                                response_word <= {4'hB, BUILD_ID, 8'd3, 8'd0, 28'd0};
+                                response_word <= {4'hB, BUILD_ID, 8'd5, 8'd0, 28'd0};
                             OP_PING:
                                 response_word <= {4'hD,
                                     command_word[59:0] ^ 60'h5A5A5A5A5A5A5A5};
@@ -218,8 +227,18 @@ module jtag_protocol_engine #(
                             OP_BATCH_BEGIN: begin
                                 batch_expected_boards <= command_word[15:0];
                                 batch_begin <= 1;
+                                batch_end <= 0;
+                                batch_state <= 1;
                             end
-                            OP_BATCH_END: batch_end <= 1;
+                            OP_BATCH_END: begin
+                                batch_end <= 1;
+                                batch_state <= 2;
+                            end
+                            OP_DEMO_STATUS: response_word <= {
+                                4'hF, demo_led_state, demo_batch_active,
+                                demo_batch_done, demo_completed_count,
+                                demo_expected_boards, batch_state, 21'd0
+                            };
                             OP_ACK: begin
                                 if (result_available)
                                     result_ack <= 1;

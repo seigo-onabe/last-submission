@@ -97,6 +97,50 @@ proc post_command {instance word} {
     }
 }
 
+proc set_batch_state {instance opcode expected_state} {
+    global fast_mode
+    for {set attempt 1} {$attempt <= 5} {incr attempt} {
+        post_command $instance [expr {$opcode << 60}]
+        # Let the TCK-to-system-clock mailbox consume this post before the
+        # status scans.  STATUS exposes the acknowledged batch state in bits 37:36.
+        after 2
+        set status [read_status $instance]
+        set actual_state [expr {($status >> 36) & 3}]
+        if {$actual_state == $expected_state} { return }
+        if {!$fast_mode} { after 2 }
+    }
+    error "FPGA did not acknowledge batch state $expected_state"
+}
+
+proc read_demo_status {instance} {
+    set value [exchange_word $instance [expr {13 << 60}]]
+    if {[expr {($value >> 60) & 0xf}] != 0xf} {
+        error [format "invalid demo status marker: %016llX" $value]
+    }
+    return $value
+}
+
+proc wait_demo_finished {instance expected_count} {
+    set deadline [expr {[clock milliseconds] + 5000}]
+    while 1 {
+        set value [read_demo_status $instance]
+        set led_state [expr {($value >> 57) & 7}]
+        set active [expr {($value >> 56) & 1}]
+        set done [expr {($value >> 55) & 1}]
+        set completed [expr {($value >> 39) & 0xffff}]
+        set expected [expr {($value >> 23) & 0xffff}]
+        if {$done && !$active && ($led_state == 2 || $led_state == 3) &&
+            $completed == $expected_count && $expected == $expected_count} {
+            puts "DEMO FIN ACK: state=$led_state completed=$completed expected=$expected"
+            return
+        }
+        if {[clock milliseconds] >= $deadline} {
+            error "demo display did not reach FIN: state=$led_state active=$active done=$done completed=$completed expected=$expected"
+        }
+        after 10
+    }
+}
+
 proc csv_quote {text} {
     if {[string first "," $text] >= 0 || [string first "\"" $text] >= 0} {
         return "\"[string map {\" \"\"} $text]\""
@@ -174,10 +218,17 @@ set rc [catch {
     }
     set build_id [expr {($version >> 44) & 0xffff}]
     set protocol_version [expr {($version >> 36) & 0xff}]
-    if {$protocol_version < 3} {
-        error "demo batch protocol requires FPGA protocol version 3 or newer"
+    if {$protocol_version < 5} {
+        error "observable demo batch protocol requires FPGA protocol version 5 or newer"
     }
-    post_command $instance_index [expr {(11 << 60) | ([llength $boards] & 0xffff)}]
+    set expected_count [expr {[llength $boards] & 0xffff}]
+    for {set attempt 1} {$attempt <= 5} {incr attempt} {
+        post_command $instance_index [expr {(11 << 60) | $expected_count}]
+        after 2
+        set status [read_status $instance_index]
+        if {[expr {($status >> 36) & 3}] == 1} { break }
+        if {$attempt == 5} { error "FPGA did not acknowledge batch begin" }
+    }
 
     foreach board $boards {
         lassign $board w h mines name cells
@@ -281,9 +332,8 @@ set rc [catch {
             puts "JTAG progress: $completed/[llength $boards] boards"
         }
     }
-    post_command $instance_index [expr {12 << 60}]
-    after 10
-    wait_engine_idle $instance_index 5000
+    set_batch_state $instance_index 12 2
+    wait_demo_finished $instance_index [llength $boards]
 } message options]
 
 device_unlock

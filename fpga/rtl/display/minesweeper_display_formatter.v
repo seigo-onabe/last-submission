@@ -87,7 +87,7 @@ module minesweeper_display_formatter (
                 if (s_error) begin
                     put_glyph(11,14); put_glyph(12,19); put_glyph(13,19);
                 end else if (s_batch_done) begin
-                    put_glyph(11,13); put_glyph(12,18); put_glyph(13,17); put_glyph(14,14);
+                    put_glyph(11,15); put_glyph(12,1); put_glyph(13,17);
                 end else if (s_batch_active) begin
                     put_glyph(11,19); put_glyph(12,24); put_glyph(13,17);
                 end else begin

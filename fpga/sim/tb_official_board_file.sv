@@ -331,6 +331,8 @@ module tb_official_board_file #(
         .current_safe(current_safe), .current_mines(current_mines),
         .current_selections(current_selections),
         .current_cycles(current_cycles), .total_cycles(total_cycles),
+        .demo_led_state(), .demo_completed_count(), .demo_expected_boards(),
+        .demo_batch_active(), .demo_batch_done(),
         .SEG_A(SEG_A),.SEG_B(SEG_B),.SEG_C(SEG_C),.SEG_D(SEG_D),
         .SEG_E(SEG_E),.SEG_F(SEG_F),.SEG_G(SEG_G),.SEG_H(SEG_H),
         .SEG_SEL(SEG_SEL)

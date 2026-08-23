@@ -88,6 +88,9 @@ module minesweeper_jtag_top #(
     wire [8:0] current_selections;
     wire [31:0] current_cycles;
     wire [63:0] total_cycles;
+    wire [2:0] demo_led_state;
+    wire [15:0] demo_completed_count, demo_expected_boards;
+    wire demo_batch_active, demo_batch_done;
 
     wire result_available;
     wire [15:0] result_board_id;
@@ -166,6 +169,11 @@ module minesweeper_jtag_top #(
         .result_opened_mines(result_opened_mines),
         .result_cycles(result_cycles), .result_score_scaled(result_score_scaled),
         .result_protocol_error(result_protocol_error),
+        .demo_led_state(demo_led_state),
+        .demo_batch_active(demo_batch_active),
+        .demo_batch_done(demo_batch_done),
+        .demo_completed_count(demo_completed_count),
+        .demo_expected_boards(demo_expected_boards),
         .result_ack(jtag_result_ack), .transport_error(jtag_transport_error)
     );
 
@@ -219,6 +227,11 @@ module minesweeper_jtag_top #(
         .current_safe(current_safe), .current_mines(current_mines),
         .current_selections(current_selections), .current_cycles(current_cycles),
         .total_cycles(total_cycles),
+        .demo_led_state(demo_led_state),
+        .demo_completed_count(demo_completed_count),
+        .demo_expected_boards(demo_expected_boards),
+        .demo_batch_active(demo_batch_active),
+        .demo_batch_done(demo_batch_done),
         .SEG_A(SEG_A),.SEG_B(SEG_B),.SEG_C(SEG_C),.SEG_D(SEG_D),
         .SEG_E(SEG_E),.SEG_F(SEG_F),.SEG_G(SEG_G),.SEG_H(SEG_H),
         .SEG_SEL(SEG_SEL)
