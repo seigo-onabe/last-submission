@@ -1,0 +1,69 @@
+\chapter{JTAG通信とクロックドメイン交差}
+\label{chap:jtag}
+
+\section{通信の役割}
+実機ではUSB-Blasterを介してPCから盤面を送り，処理結果を読み出す．FPGA側のトップは\texttt{minesweeper\_jtag\_submission\_local\_top}であり，JTAGの64ビットデータレジスタを一つのメールボックスとして使用する．通信層は，(i) Virtual JTAGのTCKで64ビットをシフトする\texttt{virtual\_jtag\_shift64}，(ii) TCKとシステムクロック間でコマンドを受け渡す\texttt{virtual\_jtag\_mailbox}，(iii) コマンドを内部ストリームへ変換する\texttt{jtag\_protocol\_engine}，(iv) 盤面の設定・セル転送・開始を管理する\texttt{board\_stream\_controller}からなる．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[>=latex, node distance=8mm and 12mm, box/.style={draw,rounded corners,align=center,minimum width=37mm,minimum height=11mm,font=\small}]
+\node[box] (pc) {PC\,/ Tcl runner};
+\node[box,right=of pc] (tck) {Virtual JTAG\\TCK domain};
+\node[box,right=of tck] (mail) {\texttt{virtual\_jtag\_mailbox}\\1-command mailbox};
+\node[box,below=of tck] (eng) {\texttt{jtag\_protocol\_engine}\\64-bit decoder};
+\node[box,right=of eng] (stream) {\texttt{board\_stream\_controller}\\CFG/LOAD/COMMIT};
+\draw[->] (pc)--node[above]{64-bit scan} (tck);
+\draw[->] (tck)--node[above]{toggle + word} (mail);
+\draw[->] (mail.south)--node[below,sloped]{\texttt{command\_valid}} (eng.north);
+\draw[->] (eng)--node[above]{ready/valid} (stream);
+\draw[<-] (pc.south) .. controls +(0,-18mm) and +(-18mm,0) .. node[below,sloped]{response capture} (eng.west);
+\end{tikzpicture}
+\caption{JTAGから盤面ストリームへの信号経路}
+\label{fig:jtag-path}
+\end{figure}
+
+\section{64ビットコマンド形式}
+コマンドのopcodeは\texttt{command\_word[63:60]}に置く．主要なopcodeを表\ref{tab:jtag-op}に示す．\texttt{BEGIN}は盤面ID，幅，高さ，地雷数を指定し，\texttt{DATA}は最大11セル（\texttt{data\_remaining}は4ビット）を4ビットセル値で詰める．\texttt{COMMIT}の下位16ビットはCRC-16-CCITTであり，エンジンは\texttt{running\_crc}と比較してから開始する．
+
+\begin{table}[tb]
+\centering
+\caption{JTAG opcodeと応答}
+\label{tab:jtag-op}
+\begin{tabular}{c|l|l}
+opcode&命令&応答・作用\\\hline
+0&NOP / STATUS&状態ビットを返す\\
+1&BEGIN&\texttt{begin\_board\_id,width,height,mines}を発行\\
+2&DATA&\texttt{cell\_ordinal}とセル列を発行\\
+3&COMMIT&CRCを検査して開始\\
+4&STATUS&busy，結果有効，エラーを返す\\
+5&RESULT\_A&盤面属性，開示数，選択数\\
+6&RESULT\_B&サイクル数と符号付きスコア\\
+7&ACK&結果スナップショットを解放\\
+8&VERSION&プロトコルversion=2，\texttt{BUILD\_ID}=0001\\
+9&PING&入力下位60ビットをXORして返す\\
+A&RESULT\_C&選択数，\texttt{stalled}\\
+\end{tabular}
+\end{table}
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=0.11cm,y=7mm, every node/.style={font=\scriptsize}]
+\foreach \x/\txt in {0/OP[63:60],4/ID or payload,20/width,25/height,30/mines,39/ordinal,47/count,51/data,60/CRC} {
+  \draw[fill=blue!8] (\x,0) rectangle (\x+4,1); \node at (\x+2,.5){\txt}; }
+\draw[<->] (0,-.25)--(64,-.25); \node at (32,-.65){64 bits（パケットごとに意味が異なる）};
+\end{tikzpicture}
+\caption{64ビットワードの概念図（フィールド幅はopcodeごとに再利用される）}
+\label{fig:jtag-word}
+\end{figure}
+
+\section{TCK側のシフタ}
+\texttt{virtual\_jtag\_shift64}は\texttt{shift\_reg[63:0]}，\texttt{shift\_count[6:0]}，\texttt{scan\_active}を持つ．Capture-DR（\texttt{virtual\_state\_cdr}）で応答を\texttt{shift\_reg}へ取り込み，Shift-DR（\texttt{virtual\_state\_sdr}）ごとに\texttt{shift\_reg <= \{tdi,shift\_reg[63:1]\}}を実行する．63回目のシフトで\texttt{received\_word}を確定し，\texttt{received\_toggle}を反転する．したがってUpdate-DRを観測する必要がなく，Tcl側のスキャン終了時点で一意にコマンドを通知できる．途中でCaptureを再実行した場合や64ビット未満で終了した場合は\texttt{scan\_error}を立てる．
+
+\section{CDCメールボックス}
+JTAGのTCKはシステムの20 MHzクロックと位相・周波数が同期していない．このため64ビットバスを直接サンプリングせず，データをTCK側の\texttt{tck\_mailbox}に保持してから1ビットのトグルを同期する．システムクロック側では3段レジスタ\texttt{post\_sync[2:0]}へ\texttt{post\_toggle}を通し，\texttt{post\_sync[2] != seen\_toggle}を新規コマンドとして検出する．バスはトグル検出時まで保持されているため，データの安定時間を確保できる．\texttt{command\_valid}が\texttt{command\_ready}と同時に成立したときだけ消費し，1コマンド処理中に次の投稿を受けない．この構造により，異なるクロックドメイン間でパルスを直接渡すことを避けている．
+
+\section{プロトコルエンジンとバックプレッシャ}
+\texttt{jtag\_protocol\_engine}の実行状態は\texttt{EX\_IDLE，EX\_BEGIN，EX\_DATA，EX\_COMMIT}である．\texttt{command\_ready}は\texttt{exec\_state==EX\_IDLE}のときだけ1となる．例えばDATAでは\texttt{cell\_valid}を保持し，\texttt{cell\_valid \&\& cell\_ready}のクロックでCRC更新，\texttt{data\_values}の4ビット右シフト，\texttt{cell\_ordinal}の加算を行う．下流の\texttt{load\_ready}が0なら上流のセルは進まず，ready/validによるバックプレッシャが成立する．
+
+\texttt{result\_snapshot}は結果を\texttt{available}が1の間保持する．未ACKのまま次の結果をcaptureすると\texttt{overflow\_error}を立てるため，ホストはRESULT\_A/B/Cを読み，ACKを発行してから次のBEGINを送る．
+

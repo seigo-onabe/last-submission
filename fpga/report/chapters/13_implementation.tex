@@ -1,0 +1,23 @@
+\chapter{回路実装上の工夫}
+\label{chap:implementation}
+
+\section{固定サイズメモリ}
+最大19\times19=361セルに対して，セルアドレスは\(19y+x\)とする．RTLの\texttt{board\_stream\_controller}は\texttt{load\_index=(load\_y<<4)+(load\_y<<1)+load\_y+load\_x}で計算し，乗算器を使わない．\texttt{board\_mem[0:360]}，開示ビットマップ，未知・既知地雷状態を固定容量にすることで，入力盤面によって回路規模が変わらない．
+
+\section{逐次化とハンドシェイク}
+全処理を一クロックで組合せ評価せず，FSMとready/validで分割した．ゲームコアの開示連鎖，neighbor scan，component builder，enumeratorはいずれもアドレス，カウンタ，待ち状態をレジスタに保持する．RAM読み出しの1クロック遅延を前提にすることで，推論結果を安定した信号として次段へ渡せる．
+
+\section{キューとbitmap}
+\texttt{solver\_safe\_fifo}，\texttt{solver\_dirty\_fifo}，ゲームコアの\texttt{queue\_mem}は，登録と取り出しを別のクロックで行う円環FIFOである．\texttt{pending}や\texttt{scheduled}のビットマップは，同じセルを何度もキューへ入れることを防ぐ．これは論理演算を少し追加する代わりに，キューのオーバーフローと再計算回数を抑える設計である．
+
+\section{全列挙の上限と枝刈り}
+\texttt{solver\_component\_builder}は最大12変数・16制約の成分を構成し，\texttt{solver\_small\_enumerator}は深さ優先で2値割当を生成する．部分割当の時点で制約の最小・最大可能地雷数が要求値に届かない場合，その枝を打ち切る．この上限は完全性を限定する一方，指数処理が無制限に回路を占有することを防ぐ．
+
+\section{除算を避ける比較}
+確率候補の比較は分母を実際に割らず，交差積で行う．候補a,bについて\(m_a/n_a<m_b/n_b\)を\(m_an_b<m_bn_a\)と比較すればよい．同様に安全セル半数判定は\(2O_s<N_s\)とし，除算器を追加しない．除算が必要な表示・スコア確定時だけ\texttt{unsigned\_divider}を共有する．
+
+\section{観測面と完全盤面の分離}
+\texttt{minesweeper\_game\_core}だけが地雷値を含む\texttt{board\_mem}を持ち，ソルバへ渡るのは\texttt{reveal\_x}，\texttt{reveal\_y}，\texttt{reveal\_is\_mine}，\texttt{reveal\_clue}，\texttt{cascade\_done}である．この配線境界は単なるソフトウェア上の規約ではなく，RTLのポート構成として観測可能情報を限定している．
+
+\section{クロックと通信の安全性}
+クロックゲーティングをせず\texttt{run\_enable}で処理FSMだけを止める．またJTAG側は\texttt{received\_toggle}，システム側は3段同期\texttt{post\_sync}を用いる．結果は\texttt{result\_snapshot}に保持し，ACKまで上書きしない．これらはFPGAで問題になりやすいクロックグリッチ，メタステーブル，データ消失を避けるための回路上の工夫である．

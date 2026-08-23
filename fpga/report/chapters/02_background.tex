@@ -1,0 +1,43 @@
+\chapter{背景知識}
+\label{ch:background}
+
+\section{FPGAとRTL}
+FPGA（Field Programmable Gate Array）は，論理関数を構成するLUT，状態を保存するフリップフロップ，配線資源，および組込みメモリを再構成できる集積回路である．本報告でいうRTL（Register Transfer Level）は，レジスタ間でどのデータを転送し，クロックのどのタイミングで値を更新するかを記述する設計抽象度である．Verilogの \texttt{always @(posedge clk)} は順序回路を表し，非ブロッキング代入 \texttt{<=} は同一クロック端で同時にレジスタを更新する．一方， \texttt{always @*} と \texttt{assign} は現在の入力から出力を求める組合せ回路である．
+
+したがって，ソフトウェアの「whileループ」は，通常，\texttt{state} レジスタと条件分岐を持つFSM（有限状態機械）へ変換される．例えばゲームコアの近傍走査は，一クロックに一つの隣接位置だけを調べ，\texttt{scan\_dx}，\texttt{scan\_dy} を更新する．この分割により，クロック周波数，メモリの読み出し遅延，回路面積を制御できる．
+
+\section{クロック，リセット，clock enable}
+本システムの主クロックは20\,MHzであり，周期は50\,nsである．通常のRTLではクロックそのものを論理ゲートで止めず，\texttt{run\_enable} の条件で状態更新を抑制する．これはクロックのスキューやゲーティングによるタイミング問題を避けるためである．非同期リセット入力は各モジュールの \texttt{reset} に接続され，状態，キューのポインタ，エラーラッチを既知値へ戻す．
+
+\section{ready/validハンドシェイク}
+ストリーム転送では，送信側が \texttt{valid=1} にしてデータを提示し，受信側が \texttt{ready=1} で受け入れ可能であることを示す．両方が同じクロックで1のときに1ワードを転送する．この規約は送信側の速度と受信側の処理速度が異なる場合にも使える．ゲームコアでは，設定を \texttt{cfg\_valid/cfg\_ready}，セルを \texttt{load\_valid/load\_ready}，選択を \texttt{select\_valid/select\_ready} で伝える．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=10mm,y=7mm, every node/.style={font=\small}]
+  \draw[->] (0,0)--(7,0) node[right]{クロック};
+  \foreach \x/\n in {0/0,1/1,2/2,3/3,4/4,5/5,6/6} {\draw (\x,0.1)--(\x,-0.1) node[below]{\n};}
+  \draw (0,1)--(0.8,1)--(0.8,1.5)--(2.8,1.5)--(2.8,1)--(7,1);
+  \node[left] at (0,1.25){valid};
+  \draw (0,2)--(1.8,2)--(1.8,2.5)--(4.8,2.5)--(4.8,2)--(7,2);
+  \node[left] at (0,2.25){ready};
+  \draw[thick] (1.8,3)--(2.8,3)--(2.8,3.5)--(4.8,3.5)--(4.8,3);
+  \node[left] at (0,3.25){転送};
+\end{tikzpicture}
+\caption{ready/validの転送成立例（両信号が1のクロックで成立）}
+\label{fig:ready-valid}
+\end{figure}
+
+\section{固定ストライドのアドレス計算}
+盤面は二次元座標 \((x,y)\) で表すが，RTLのRAMは一次元配列である．最大幅を19とし，実際の幅が小さい場合も行間隔を19に固定すると，セルアドレスは
+\[
+  i=19y+x=(y\ll4)+(y\ll1)+y+x
+\]
+となる．乗算器を用いずシフトと加算だけで実装できるため，\texttt{select\_index\_calc}，\texttt{current\_index\_calc}，\texttt{neighbor\_index\_calc} と，ストリーム側の \texttt{load\_index} は同じ規則を使う．
+
+\section{同期RAMとビットマップ}
+同期RAMではアドレスをクロック端で受け付け，データを次のクロックで出力する．\texttt{solver\_state\_ram} の \texttt{knowledge\_mem} はこの方式で読み出される．一方，開封済みか，キューへ登録済みかのような1ビット情報は \texttt{opened}，\texttt{scheduled} のビットマップで保持する．ビットマップはセル番号をそのままビット位置に対応させ，重複登録判定を一クロックの論理で行える．
+
+\section{マインスイーパの制約}
+開いた数字セルの値を \(c\)，隣接する既知地雷数を \(m\)，未知隣接セル集合を \(U\) とすると，未知集合に含まれる地雷数は \(r=c-m\) である．\(r=0\) なら全て安全，\(r=|U|\) なら全て地雷である．この局所制約を回路内で再評価し，確定したセルをFIFOに送ることがソルバの基本動作となる．
+

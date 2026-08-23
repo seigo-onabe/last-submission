@@ -1,0 +1,31 @@
+\chapter{はじめに}
+\label{ch:introduction}
+
+\section{目的と背景}
+本実験では，マインスイーパの盤面管理と自動解答アルゴリズムをFPGA上のRTL回路として実装した．マインスイーパは，開いたマスに表示される数字を手掛かりに，周囲の地雷位置を推定する問題である．ソフトウェアでは盤面を配列として走査し，関数呼出しや動的データ構造を利用できるが，FPGAでは処理をクロックごとの状態遷移と固定容量のメモリに分解しなければならない．本実装の目的は，このアルゴリズムを実際に動作する同期回路へ変換し，通信，盤面管理，推論，評価表示までを一つの処理系として構成することである．
+
+\section{作成したシステム}
+提出トップは \texttt{minesweeper\_jtag\_submission\_local\_top} であり，20\,MHzクロック \texttt{CLK\_20MHZ} とリセット \texttt{RESET\_N} を受ける．このトップは \texttt{minesweeper\_jtag\_top} をパラメータ設定して使用し，決定論的ソルバ，JTAG動作，フルスピード動作，最大15回の確率的選択，通常8回の確率的選択を有効にしている．盤面の最大値は19\(\times\)19=361セルである．
+
+図\ref{fig:system-overview-intro}は，PCからFPGAまでの情報の流れを示す概念図である．PC側のJTAGコマンドは，盤面ヘッダとセル列に分けられ，FPGA内部で \texttt{cfg\_valid}，\texttt{load\_valid}，\texttt{start\_solver} に変換される．処理結果はスナップショットとして保持され，PCが読み出すまで失われない．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[>=latex, node distance=8mm, every node/.style={font=\small}]
+    \node[draw,rounded corners,align=center] (pc) {PC / Tcl\\JTAGスクリプト};
+    \node[draw,rounded corners,right=of pc,align=center] (jtag) {Virtual JTAG\\メールボックス};
+    \node[draw,rounded corners,right=of jtag,align=center] (stream) {\texttt{board\_stream\_controller}};
+    \node[draw,rounded corners,below=of stream,align=center] (game) {\texttt{minesweeper\_game\_core}\\完全盤面・開示処理};
+    \node[draw,rounded corners,left=of game,align=center] (solver) {決定論的ソルバ\\観測情報のみ};
+    \draw[->] (pc)--node[above]{64 bit語}(jtag);
+    \draw[->] (jtag)--node[above]{BEGIN/DATA/COMMIT}(stream);
+    \draw[->] (stream)--(game);
+    \draw[->] (game)--node[below]{\texttt{reveal\_*}}(solver);
+    \draw[->] (solver)--node[right]{\texttt{select\_*}}(game);
+  \end{tikzpicture}
+  \caption{FPGAマインスイーパの処理経路}
+  \label{fig:system-overview-intro}
+\end{figure}
+
+\section{本レポートの読み方}
+第2章ではFPGA，RTL，クロック同期回路，ready/valid通信，RAM，FSMなどの基礎を説明する．第3章で要求仕様と設計方針，第4章でモジュールの接続を示す．第5章では完全盤面を管理するゲームコアを回路レベルで説明する．以降では決定論的推論，制約列挙，JTAG通信，評価回路，検証結果を順に扱う．特に，アルゴリズム上の集合やキューが，どのレジスタ，RAM，FIFO，および信号線で実現されているかを対応づけて記述する．

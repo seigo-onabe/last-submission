@@ -1,0 +1,45 @@
+\chapter{評価値計算と表示回路}
+\label{chap:metrics}
+
+\section{スコアの定義と固定小数点化}
+\texttt{minesweeper\_metrics}は盤面完了信号\texttt{board\_done}を受けて，開いた安全セル数を\texttt{current\_safe}，開いた地雷数を\texttt{current\_mines}へラッチする．盤面の安全セル総数を\(N_s=WH-N_m\)，地雷総数を\(N_m\)とすると，スコアは
+\begin{equation}
+ S=\frac{O_s}{N_s}-\frac{O_m}{N_m}
+ =\frac{O_sN_m-O_mN_s}{N_sN_m}
+\end{equation}
+である．RTLでは\texttt{safe\_product=current\_safe*mines\_latched}，\texttt{mine\_product=current\_mines*safe\_cells}，\texttt{rational\_difference}を生成し，分子全体を10000倍してから一度だけ除算する．この順序により，各分数を先に丸める誤差を避ける．\texttt{current\_score\_scaled}と\texttt{total\_score\_scaled}は符号付き32ビットで，例えば9259は0.9259を表す．
+
+\section{メトリクスFSM}
+\texttt{minesweeper\_metrics}は\texttt{S\_IDLE}，\texttt{S\_SAFE\_START}，\texttt{S\_SAFE\_WAIT}，\texttt{S\_COMMIT}を持つ．IDLEで盤面情報と\texttt{board\_cycles}を取り込み，\texttt{total\_cycles}へ加算する．SAFE\_STARTで\texttt{divider\_numerator}と\texttt{divider\_denominator}を設定し，\texttt{divider\_start}を1クロックだけ発行する．SAFE\_WAITは\texttt{divider\_done}を待ち，COMMITで商の符号を戻して結果を確定する．\texttt{current\_safe==safe\_cells}なら\texttt{boards\_fully\_solved}を加算し，\texttt{result\_valid}を1周期出力する．
+
+\section{逐次除算器}
+\texttt{unsigned\_divider}は組合せ除算器を使わない32ビットrestoring dividerである．内部レジスタは\texttt{dividend\_work}，\texttt{divisor\_work}，\texttt{quotient\_work}，33ビットの\texttt{remainder\_work}，6ビットの\texttt{iteration}である．毎クロック
+\begin{align}
+ R'&=\{R[31:0],D[31]\},\\
+ q&=[R'\geq M],\\
+ R_{next}&=q?R'-M:R',\\
+ Q_{next}&=\{Q[30:0],q\}
+\end{align}
+を実行し，32回目に\texttt{quotient}と\texttt{remainder\_out}を出力する．\texttt{denominator==0}の場合は\texttt{divide\_by\_zero}を立て，商を\texttt{32'hffff\_ffff}として即時完了する．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[>=latex,node distance=9mm,box/.style={draw,rounded corners,align=center,minimum width=30mm,minimum height=9mm}]
+\node[box](m){\texttt{minesweeper\_metrics}\\積・符号};
+\node[box,right=of m](d){\texttt{unsigned\_divider}\\32反復};
+\node[box,right=of d](r){score registers\\\texttt{current/total}};
+\draw[->](m)--node[above]{start,numerator/denominator}(d);
+\draw[->](d)--node[above]{done,quotient}(m);
+\draw[->](m)--(r);
+\end{tikzpicture}
+\caption{スコア計算のデータパス}
+\end{figure}
+
+\section{7セグメント表示}
+\texttt{minesweeper\_display\_formatter}は64桁の表示ビット列\texttt{segments[511:0]}を生成する．状態は\texttt{ST\_CLEAR，ST\_LOAD，ST\_CONVERT，ST\_WRITE，ST\_COMMIT}であり，13フィールドを順番に処理する．\texttt{binary\_work}と\texttt{bcd\_work}を32回シフトし，5以上のBCD桁へ3を加えるdouble-dabbleを実装している．これにより大きな組合せ除算器を表示経路に置かずに済む．フィールドごとの値は処理数，完全解答数，盤面番号，選択数，安全開示数，地雷開示数，幅，高さ，地雷数，盤面サイクル数，累積サイクル数，現在スコア，累積スコアである．
+
+\texttt{mu500\_7seg\_latch\_driver}は\texttt{ST\_SETUP，ST\_LATCH，ST\_HOLD}で動作する．64本の共有データ線\texttt{data\_lines}を\texttt{SEG\_A}～\texttt{SEG\_H}へ分割し，\texttt{SEG\_SEL[8:0]}のSEL0～SEL7で8面の7セグメント列，SEL8で64個のLEDをラッチする．データを先に設定してから選択線を1にするため，ラッチ中の桁化けを抑制する．表示範囲を超えた場合は\texttt{overflow}をLED経路へ伝える．
+
+\section{速度制御}
+\texttt{solver\_speed\_control}はクロックをゲートせず，\texttt{run\_enable}をFSMのclock enableとして使用する．設定Fでは毎クロック実行し，0では停止する．1～Eでは\texttt{CLOCK\_HZ/divider}で実行間隔を作る．この方式はクロックのスキューや合成上のゲーティング問題を避け，表示や通信だけを継続できる．
+

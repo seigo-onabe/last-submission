@@ -1,0 +1,47 @@
+\chapter{要求仕様と設計方針}
+\label{ch:requirements}
+
+\section{機能要求}
+本システムは，PCから受け取った一つの盤面をFPGA内部へロードし，選択と開示を繰り返して結果を返す．幅と高さは1〜19，地雷数は1以上かつセル総数未満，セル値は0〜9（9は地雷）とする．提出トップではJTAGを唯一の外部制御経路として固定し，盤面入力，処理開始，状態照会，結果読み出し，ACK（結果受領通知）を実現する．
+
+\section{インターフェース要求}
+ゲームコアの主要信号は次の通りである．設定は \texttt{cfg\_width}，\texttt{cfg\_height}，\texttt{cfg\_total\_mines} と \texttt{cfg\_valid/cfg\_ready} で転送する．セルは \texttt{load\_index} と \texttt{load\_value} で転送する．ソルバからゲームコアへの選択は \texttt{select\_x}，\texttt{select\_y}，\texttt{select\_valid/select\_ready}，逆方向の観測情報は \texttt{reveal\_valid}，\texttt{reveal\_x}，\texttt{reveal\_y}，\texttt{reveal\_is\_mine}，\texttt{reveal\_clue} で表す．この分離により，ソルバは未開示セルの本当の値を入力として受け取らない．
+
+\section{通信から実行までの要求}
+\texttt{board\_stream\_controller} は，入力トランザクションを次のFSMで管理する．
+\[
+\texttt{ST\_IDLE}\rightarrow\texttt{ST\_CFG}\rightarrow\texttt{ST\_LOAD}\rightarrow\texttt{ST\_COMMIT}\rightarrow\texttt{ST\_RUN}
+\]
+\texttt{BEGIN} で盤面属性を受け取り，\texttt{CFG} でゲームコアへ設定を送り，\texttt{DATA} を行優先順でロードし，\texttt{COMMIT} で \texttt{start\_solver} を1クロックだけ生成する．実行中に \texttt{result\_valid} を受けると \texttt{board\_done} を出し，次の盤面を受け付ける．セル順序の欠落，値が9を超えるセル，違法なヘッダは \texttt{protocol\_error} にラッチする．
+
+\section{非機能要求}
+\begin{itemize}
+  \item 20\,MHzクロックで合成可能な同期回路であること．
+  \item 19\(\times\)19=361セルを固定容量で保持し，動的メモリを使わないこと．
+  \item 完全盤面はゲームコアだけが参照し，ソルバは開示イベントだけを参照すること．
+  \item FIFOの空・満杯，範囲外座標，重複開示，制約矛盾を検出して \texttt{protocol\_error} または \texttt{stalled} に反映すること．
+  \item 除算器や浮動小数点演算をアルゴリズムの各クロック経路に置かず，固定小数点または比較可能な整数演算を用いること．
+\end{itemize}
+
+\section{モジュール分割の方針}
+処理を通信（\texttt{virtual\_jtag\_mailbox}，\texttt{jtag\_protocol\_engine}），ストリーム変換（\texttt{board\_stream\_controller}），盤面管理（\texttt{minesweeper\_game\_core}），推論（\texttt{minesweeper\_solver\_deterministic} と下位ブロック），評価・表示に分割した．各境界はクロック同期のハンドシェイクとし，内部のアルゴリズムをJTAGのビット配置から独立させた．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[node distance=9mm, every node/.style={draw,rounded corners,align=center,font=\small},>=latex]
+  \node (transport) {JTAG受信\\\texttt{virtual\_jtag\_mailbox}};
+  \node[right=of transport] (proto) {命令解釈\\\texttt{jtag\_protocol\_engine}};
+  \node[right=of proto] (stream) {盤面FSM\\\texttt{board\_stream\_controller}};
+  \node[below=of stream] (game) {完全盤面\\\texttt{minesweeper\_game\_core}};
+  \node[left=of game] (solver) {観測だけで推論\\\texttt{minesweeper\_solver\_deterministic}};
+  \node[left=of solver] (metrics) {評価・表示};
+  \draw[->] (transport)--(proto)--(stream)--(game);
+  \draw[<->] (game)--node[above]{選択/開示}(solver);
+  \draw[->] (solver)--(metrics);
+\end{tikzpicture}
+\caption{機能分割と境界信号}
+\label{fig:architecture-requirements}
+\end{figure}
+
+\section{設計上のトレードオフ}
+全361セルを毎クロック完全走査すれば単純だが，論理量と処理時間が増える．そこでソルバは \texttt{solver\_dirty\_fifo} を使い，変更されたセルの近傍だけを再評価する．一方，制約の全列挙は変数数を最大12に制限し，最大 \(2^{12}=4096\) 通りに抑える．固定上限により回路規模を予測できる反面，大きな連結成分では \texttt{stalled} となる可能性がある．

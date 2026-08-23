@@ -1,0 +1,290 @@
+\chapter{制約コンポーネントの構築と全列挙回路}
+\label{ch:component-enumeration}
+
+前章のR1--R5は，局所的に安全／地雷を確定できるときは非常に強い．しかし，例えば「二つのセルのうち一つだけが地雷」という制約が複数個つながると，どのセルも単独では確定できない場合がある．本設計では，そのような未知セルを小さい連結成分に分け，成分内のすべての0/1割当をハードウェアで列挙する．ただし回路資源を固定するため，成分の変数は最大12個，制約は最大16個（提出トップの候補収集時は\texttt{MAX\_COLLECTOR\_CONSTRAINTS=8}）に制限する．12変数なら全割当は最大$2^{12}=4096$通りであり，深さ優先探索（DFS）を1クロックずつ進めれば固定回路で実現できる．
+
+\section{成分処理の全体配線}
+\label{sec:component-overview}
+
+成分処理は，(1) 制約の座標変換，(2) 変数番号付けと制約格納，(3) 全列挙，(4) 確定セルまたは候補の出力，という4ブロックに分かれる．親FSM内の\texttt{component\_collector\_mode}が通常のR5ペア処理と，確率候補収集処理を切り替える．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=7mm, every node/.style={font=\scriptsize}]
+    \node[block,minimum width=32mm] (adapter) {\texttt{solver\_component\_adapter}\\近傍mask/5×5 mask};
+    \node[block,right=of adapter,minimum width=32mm] (builder) {\texttt{solver\_component\_builder}\\グローバルセル→局所変数};
+    \node[block,right=of builder,minimum width=32mm] (enum) {\texttt{solver\_small\_enumerator}\\最大12変数のDFS};
+    \node[block,right=of enum,minimum width=32mm] (walker) {\texttt{solver\_forced\_cell\_walker}\\forced mask→セル番号};
+    \node[memory,below=of builder,minimum width=32mm] (constraint) {制約RAM\\16×(12 bit mask+4 bit mine)};
+    \node[queue,below=of enum,minimum width=32mm] (result) {候補／強制結果\\ready/valid};
+    \draw[bus] (adapter)--node[above]{\texttt{cell\_index}}(builder);
+    \draw[bus] (builder)--node[above]{制約mask}(enum);
+    \draw[control] (builder)--(constraint);
+    \draw[bus] (enum)--node[above]{\texttt{forced\_safe/mine}}(walker);
+    \draw[bus] (enum)--(result);
+    \draw[bus] (walker)--node[below]{\texttt{result\_cell,is\_mine}}(result);
+  \end{tikzpicture}
+  \caption{小規模制約コンポーネントの処理パイプライン}
+  \label{fig:component-pipeline}
+\end{figure}
+
+上位の\modulename{solver_small_component_pipeline}はこれらを接続する．外部に対しては，\texttt{constraint\_valid/ready}，\texttt{solve\_start/ready}，\texttt{result\_valid/ready}の3種類のready/valid境界を持ち，制約の発見と盤面状態への書込みは親の\modulename{minesweeper_solver_deterministic}が担当する．
+
+\section{局所マスクからセル番号への変換}
+\label{sec:component-adapter}
+
+\modulename{solver_component_adapter}は5状態（\texttt{ST\_IDLE}, \texttt{ST\_BEGIN}, \texttt{ST\_SCAN}, \texttt{ST\_EMIT}, \texttt{ST\_END}）を持つ．入力が通常の数字制約なら\texttt{local\_mask[7:0]}を8近傍として扱い，R5派生制約なら\texttt{derived\_mask[24:0]}を5×5窓として扱う．開始時に\texttt{active\_derived}, \texttt{active\_width}, \texttt{active\_height}, \texttt{active\_center\_x/y}, \texttt{active\_base\_x/y}, \texttt{active\_mask}, \texttt{active\_mines}へ入力をラッチする．
+
+通常制約のposition 0〜7は次の相対座標へ変換される．
+\begin{center}
+\begin{tabular}{c|cccccccc}
+\toprule
+position &0&1&2&3&4&5&6&7\\
+\midrule
+$(\Delta x,\Delta y)$&(-1,-1)&(0,-1)&(1,-1)&(-1,0)&(1,0)&(-1,1)&(0,1)&(1,1)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+派生制約では\texttt{position[4:0]}を$(position\bmod5,\lfloor position/5\rfloor)$として\texttt{active\_base\_x/y}に足す．\texttt{cell\_x\_calc}または\texttt{cell\_y\_calc}が有効盤面外なら\texttt{coordinate\_error}を立てて中断する．選択されていないmaskビットは\texttt{ST\_SCAN}で飛ばし，選択ビットだけを\texttt{builder\_cell\_index}へラッチして\texttt{ST\_EMIT}で1件送る．このため，境界外のゼロ埋めを成分へ誤って混ぜない．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[cellmatrix/.style={matrix of nodes,nodes in empty cells,draw,minimum size=5mm,inner sep=0pt}, every node/.style={font=\scriptsize}]
+    \matrix[cellmatrix] (m) {
+      0&1&0&0&0\\
+      1&0&0&1&0\\
+      0&0&0&0&0\\
+      0&0&1&0&0\\
+      0&0&0&0&0\\
+    };
+    \node[above=2mm of m] {\texttt{derived\_mask[24:0]}};
+    \node[block,right=17mm of m,minimum width=31mm] (out) {\texttt{builder\_cell\_index}\\$19y+x$を出力};
+    \draw[bus] (m.east)--node[above]{base座標を加算}(out.west);
+  \end{tikzpicture}
+  \caption{派生制約の5×5マスクを疎なセル列へ変換するイメージ}
+  \label{fig:component-adapter-mask}
+\end{figure}
+
+\section{コンポーネント・ビルダの内部レジスタ}
+\label{sec:component-builder}
+
+\modulename{solver_component_builder}は，ストリームで到着する複数の制約を，列挙器が扱える局所表現へ変換する．主な格納配列は次の通りである．
+
+\begin{table}[tb]
+\centering
+\caption{\texttt{solver\_component\_builder}のデータ構造}
+\label{tab:builder-registers}
+\begin{tabularx}{\linewidth}{llX}
+\toprule
+配列／レジスタ & 幅・深さ & 役割\\
+\midrule
+\texttt{variable\_cells} & 9 bit×12 & 局所変数番号からグローバルセル番号への逆引き表\\
+\texttt{constraint\_masks} & 12 bit×16 & 各制約に現れる局所変数の集合\\
+\texttt{constraint\_mines} & 5 bit×16 & その集合に含まれる地雷数\\
+\texttt{current\_mask} & 12 bit & 1件の入力制約を組立中の作業レジスタ\\
+\texttt{existing\_variable\_count} & 4 bit & 制約開始前の変数数（切断時のロールバック用）\\
+\texttt{building},\texttt{sealed} & 1 bit & 制約入力中／入力完了後を示す制御レジスタ\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+新しい制約の\texttt{begin}で\texttt{current\_mask=0}，\texttt{current\_mines=begin\_mines}，\texttt{existing\_variable\_count=variable\_count}とする．\texttt{cell\_valid \&\& cell\_ready}ごとに，入力セルが\texttt{variable\_cells}内にあるかを最大12要素の組合せ比較で調べる．既存ならその変数ビットを立て，新規なら配列末尾へ格納し，\texttt{variable\_count}を増やす．既存変数が1つでも含まれれば\texttt{current\_overlap}を立てる．
+
+\texttt{end}時の判定は回路設計上重要である．
+\begin{enumerate}
+  \item \texttt{current\_mask==0}または\texttt{current\_mines > count\_ones(current\_mask)}なら\texttt{malformed}．
+  \item 既存制約と重なりがなく，かつ既に成分制約が存在するなら\texttt{disconnected}（\texttt{SKIP\_DISCONNECTED=1}時はこの制約だけ捨てる）．
+  \item 同じmaskが既にあるのにmine数が違えば\texttt{contradiction}．
+  \item 同一maskがなければ\texttt{constraint\_masks[constraint\_count]}へ登録する．
+\end{enumerate}
+
+成分を確定する\texttt{finish}で\texttt{sealed=1}，\texttt{component\_valid=(variable\_count!=0 \land constraint\_count!=0)}となる．12変数を超えたときは，通常モードなら\texttt{overflow}で停止し，収集モード（\texttt{SKIP\_DISCONNECTED=1}）なら\texttt{current\_overflow}を立ててその制約を不完全として戻す．これにより，大きなフロンティアが現れても回路全体が予期せず拡大しない．
+
+\section{小成分パイプラインのFSM}
+\label{sec:component-pipeline-fsm}
+
+\modulename{solver_small_component_pipeline}の状態を図\ref{fig:pipeline-fsm}に示す．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=7mm, every node/.style={font=\scriptsize}]
+    \node[state] (load) {\texttt{ST\_LOAD}};
+    \node[state,right=of load] (finish) {\texttt{ST\_BUILDER\_FINISH}};
+    \node[state,right=of finish] (bw) {\texttt{ST\_BUILDER\_WAIT}};
+    \node[state,below=of bw] (el) {\texttt{ST\_ENUM\_LOAD}};
+    \node[state,left=of el] (es) {\texttt{ST\_ENUM\_START}};
+    \node[state,left=of es] (ew) {\texttt{ST\_ENUM\_WAIT}};
+    \node[state,below=of ew] (walk) {\texttt{ST\_WALK\_*}};
+    \node[state,right=of walk] (cand) {\texttt{ST\_CAND\_READ/COMPARE/OUTPUT}};
+    \node[state,right=of cand] (done) {\texttt{ST\_COMPLETE}};
+    \draw[signal] (load)--node[above]{solve}(finish);
+    \draw[signal] (finish)--(bw);
+    \draw[signal] (bw)--(el);
+    \draw[signal] (el)--(es);
+    \draw[signal] (es)--(ew);
+    \draw[signal] (ew)--node[left]{forced mask}(walk);
+    \draw[signal] (ew)--node[above]{閉じた成分}(cand);
+    \draw[signal] (walk)--(done);
+    \draw[signal] (cand)--(done);
+    \draw[signal] (done)--++(0,8mm)-|(load);
+  \end{tikzpicture}
+  \caption{小成分パイプラインの状態遷移}
+  \label{fig:pipeline-fsm}
+\end{figure}
+
+\texttt{ST\_ENUM\_LOAD}では\texttt{load\_constraint\_index}を0から\texttt{component\_constraint\_count-1}まで進め，ビルダの\texttt{query\_constraint\_mask/mines}を列挙器の\texttt{constraint\_write\_*}へ接続する．\texttt{ST\_ENUM\_WAIT}で列挙完了を待ち，\texttt{enum\_forced\_safe}または\texttt{enum\_forced\_mine}が非ゼロならwalkerを起動する．どちらもゼロで\texttt{closed\_local=1}なら，この成分は論理的には矛盾しないがセルを確定できないため，候補選択用の\texttt{ST\_CAND\_*}へ進む．
+
+\section{DFS列挙器のアルゴリズム}
+\label{sec:enumerator-algorithm}
+
+\modulename{solver_small_enumerator}は最大12変数の制約を正確に列挙する．各制約は12 bit maskと4 bitの地雷数であり，割当\texttt{assignment[i]}=1を「局所変数$i$が地雷」と定義する．有効割当$z$は各制約$k$について
+\begin{equation}
+  \operatorname{popcount}(z\mathbin{\&}\operatorname{mask}_k)=\operatorname{mines}_k
+  \label{eq:enumerator-constraint}
+\end{equation}
+を満たす必要がある．
+
+\subsection{内部RAMと集計値}
+
+列挙器の主要な配列は次の通りである．
+\begin{itemize}
+  \item \texttt{constraint\_masks[0:15]}，\texttt{constraint\_mines[0:15]}：入力制約のRAM．
+  \item \texttt{ways\_by\_mines[0:12]}：地雷数ごとの有効割当数．
+  \item \texttt{mine\_ways[variable*(MAX\_VARIABLES+1)+mine\_count]}：各変数が地雷で，かつ総地雷数が所定値の割当数．
+  \item \texttt{mine\_total[0:11]}：各変数が地雷となった有効割当の総数．
+\end{itemize}
+\texttt{total\_ways}は全有効割当数であり，\texttt{mine\_total[i]=0}なら変数$i$を安全，\texttt{mine\_total[i]=total\_ways}なら地雷と確定できる．
+
+\subsection{状態遷移と枝刈り}
+
+\begin{table}[tb]
+\centering
+\caption{\texttt{solver\_small\_enumerator}のDFS状態}
+\label{tab:enumerator-states}
+\begin{tabularx}{\linewidth}{llX}
+\toprule
+状態 & 主要レジスタ & 処理\\
+\midrule
+\texttt{ST\_IDLE} & 入力 & startで変数数，制約数，最大地雷数をラッチ\\
+\texttt{ST\_CLEAR} & \texttt{clear\_mine\_count} & 集計RAMを0クリア\\
+\texttt{ST\_VALIDATE} & \texttt{constraint\_cursor} & maskが有効範囲か，mine数が多すぎないか検査\\
+\texttt{ST\_CHECK\_NODE} & \texttt{assignment\_depth} & 部分割当が制約を満たし得るか判定\\
+\texttt{ST\_CHECK\_CONSTRAINT} & \texttt{pending\_constraint\_mask} & 残り制約を最大2件ずつ枝刈り検査\\
+\texttt{ST\_EXPAND} & \texttt{assignment},\texttt{mine\_branch\_pending} & 現在変数を安全(0)側へ展開\\
+\texttt{ST\_RECORD} & 集計RAM & 完全割当を地雷数別に記録\\
+\texttt{ST\_BACKTRACK} & \texttt{backtrack\_depth} & 保留中の地雷(1)枝へ戻る\\
+\texttt{ST\_FINISH} & forced mask & $total\_ways$から強制セルを生成\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\texttt{assignment\_depth}は次に決定する変数位置を示し，\texttt{mine\_branch\_pending}はまだ1側を試していない変数のbitmapである．\texttt{ST\_EXPAND}で\texttt{assignment[depth]=0}を設定し，\texttt{mine\_branch\_pending[depth]=1}として深さを1増やす．深さが変数数に達すると\texttt{ST\_RECORD}へ入り，assignmentのpopcountを\texttt{assignment\_mines}へ求める．
+
+\texttt{ST\_CHECK\_NODE}の枝刈りは二つの条件を持つ．部分割当の既知地雷数を$p$，未割当で制約に現れる変数数を$q$，制約の要求地雷数を$r$とすると，
+\begin{equation}
+  p>r\quad\text{または}\quad p+q<r
+  \label{eq:enumerator-prune}
+\end{equation}
+なら，残りの変数をどう選んでも成立しないため\texttt{ST\_BACKTRACK}へ進む．この上限／下限検査を行うことで，単純な4096通りの全探索より早く終了する．ただし，回路のレイテンシは入力データに依存する．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[level distance=10mm,sibling distance=23mm,every node/.style={draw,rounded corners,font=\scriptsize,inner sep=2pt,align=center}]
+    \node {depth 0\\$p=0$}
+      child {node {x0=0\\継続}
+        child {node {x1=0\\$p+q<r$で枝刈り}}
+        child {node {x1=1\\継続}}}
+      child {node {x0=1\\$p>r$なら枝刈り}};
+  \end{tikzpicture}
+  \caption{DFSにおける上限・下限枝刈りの概念例}
+  \label{fig:enumerator-prune-tree}
+\end{figure}
+
+\subsection{列挙結果からの強制判定}
+
+\texttt{ST\_FINISH}で各変数$i$について
+\begin{align}
+  \texttt{mine\_total[i]}=0 &\Rightarrow i\text{は強制安全},\\
+  \texttt{mine\_total[i]}=\texttt{total\_ways} &\Rightarrow i\text{は強制地雷}
+\end{align}
+と判定し，12 bitの\texttt{forced\_safe\_mask}，\texttt{forced\_mine\_mask}を出力する．有効割当が0通りなら\texttt{contradiction}を立てる．制約数が2未満の場合は\texttt{use\_dfs=0}として互換用の単純割当列挙状態を使い，制約を1件ずつ完全一致で検査する．
+
+\section{強制セルwalkerと親ソルバへの書込み}
+\label{sec:forced-walker}
+
+列挙器のmaskは局所変数番号であり，盤面のセル番号ではない．\modulename{solver_forced_cell_walker}は\texttt{query\_variable}を0から\texttt{active\_variable\_count-1}まで進め，ビルダの\texttt{query\_cell}を読み出す．\texttt{active\_safe\_mask}または\texttt{active\_mine\_mask}が1なら\texttt{ST\_EMIT}で\texttt{result\_cell}と\texttt{result\_is\_mine}をready/valid出力する．同じ変数が両方のmaskに立っていれば矛盾である．
+
+パイプライン側が結果を受けると，\texttt{component\_apply\_index}と\texttt{component\_apply\_is\_mine}へラッチし，\texttt{S\_COMP\_APPLY\_ADDR}→\texttt{S\_COMP\_APPLY\_WAIT}→\texttt{S\_COMP\_APPLY}で状態RAMを同期読出しする．未知セルなら新たに\texttt{CELL\_QUEUED\_SAFE}または\texttt{CELL\_KNOWN\_MINE}を書き，安全の場合は\texttt{u\_safe\_fifo}へも投入する．既に同じ結論が書かれている場合は\texttt{component\_apply\_compatible}で許可される．
+
+\section{成分の収集と重複抑制}
+\label{sec:component-collector}
+
+論理的に確定する成分を処理した後，親FSMは\texttt{S\_COLLECT\_INIT}へ進み，\texttt{collector\_seed\_index=0}から有効制約をセル番号順に調べる．\texttt{collector\_scan\_index}周辺の2スロットを組合せ優先エンコーダ（\texttt{collector\_scan\_lane=0,1}）で調べ，空の361 bit配列を毎回フルスキャンしない．
+
+シード制約を\texttt{S\_COLLECT\_LOAD}へ入力し，それと重なる制約をパスごとに追加する．\texttt{collector\_pass\_added}が1ならもう一度scan indexを0へ戻し，追加がなかった時点で成分を閉じる．\texttt{collector\_source\_0〜3}と\texttt{collector\_source\_count}には成分を構成した最大4個の制約番号を保存する．閉じた成分のシグネチャ\texttt{collector\_signature\_0}は，次のシードが同じ成分を再処理しないための4スロット比較に使う．
+
+成分に制約を追加するたび，ビルダは以前の変数との重なりを検査する．新規制約に既存変数が一つもない場合は切断成分なので，収集モードではその制約を捨てて\texttt{constraint\_incomplete}を返す．この処理は，列挙器の最大変数数を超える巨大成分を無理に一つのDFSへ送らないための安全策である．
+
+\section{確率候補の生成と比較回路}
+\label{sec:component-candidate}
+
+強制maskが空で，成分が閉じている場合，列挙器は変数ごとの地雷出現数を候補として出力する．pipelineの\texttt{ST\_CAND\_READ}は\texttt{candidate\_variable}を使って\texttt{builder\_query\_cell}を読み，\texttt{enum\_query\_mine\_total}を\texttt{candidate\_current\_mines}へラッチする．\texttt{ST\_CAND\_COMPARE}では，地雷出現数が小さい候補を保存し，同数ならグローバルセル番号が小さい方を選ぶ．親ソルバへは\texttt{candidate\_cell}，\texttt{candidate\_mine\_ways}，\texttt{candidate\_total\_ways}を出力する．
+
+親FSMは全成分から得た候補$(m_i,w_i)$（セル$i$が地雷である割当数$m_i$，成分の総有効割当数$w_i$）を比較する．確率$m_i/w_i$の比較で除算器を使わず，次の交差積を用いる．
+\begin{equation}
+  \frac{m_a}{w_a}<\frac{m_b}{w_b}
+  \quad\Longleftrightarrow\quad
+  m_a w_b < m_b w_a.
+  \label{eq:cross-product}
+\end{equation}
+RTLでは\texttt{candidate\_compare\_left = component\_candidate\_mines * best\_candidate\_ways}，\texttt{candidate\_compare\_right = best\_candidate\_mines * component\_candidate\_ways}という乗算器2個を組み合わせ回路として構成し，等しい場合は\texttt{component\_candidate\_cell < best\_candidate\_cell}でタイブレークする．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=8mm, every node/.style={font=\scriptsize}]
+    \node[block] (a) {$m_a$};
+    \node[block,right=of a] (la) {乗算器\\$m_a w_b$};
+    \node[block,below=of a] (b) {$m_b$};
+    \node[block,right=of b] (lb) {乗算器\\$m_b w_a$};
+    \node[block,right=18mm of la,minimum width=27mm] (cmp) {比較器\\小さい方};
+    \draw[bus] (a)--(la);
+    \draw[bus] (b)--(lb);
+    \draw[bus] (la)--(cmp);
+    \draw[bus] (lb)--(cmp);
+    \draw[control] (cmp)--node[above]{best candidate}(cmp.east);
+    \node[align=center,below=9mm of cmp] {確率を保持する浮動小数点回路は不要};
+  \end{tikzpicture}
+  \caption{確率候補を交差積で比較するデータパス}
+  \label{fig:candidate-cross-product}
+\end{figure}
+
+この比較は「最も安全そうなセル」を選ぶためのものであり，そのセルが必ず安全だと証明するものではない．したがって，候補を選んだ後も通常の\texttt{S\_ISSUE}→開示→推論ループへ戻る．
+
+\section{回路資源とアルゴリズムの対応}
+\label{sec:component-summary}
+
+\begin{table}[tb]
+\centering
+\caption{数学的対象とRTL要素の対応}
+\label{tab:algorithm-rtl-map}
+\begin{tabularx}{\linewidth}{lXl}
+\toprule
+数学・アルゴリズム & ハードウェア表現 & 主な信号／レジスタ\\
+\midrule
+未知セル集合 & 8 bitまたは25 bit mask & \texttt{unknown\_mask}, \texttt{difference\_mask}\\
+制約の残り地雷数 & 4〜5 bit整数 & \texttt{remaining}, \texttt{constraint\_mines}\\
+局所制約の集合 & 361行同期RAM & \texttt{constraint\_mem}, \texttt{constraint\_valid}\\
+派生制約集合 & 256スロット線形探索hash表 & \texttt{slot\_valid}, \texttt{probe\_index}\\
+連結成分 & 最大12セルの番号表 & \texttt{variable\_cells}\\
+割当の集合 & DFS状態レジスタ & \texttt{assignment}, \texttt{assignment\_depth}\\
+未試行の地雷枝 & bitmap & \texttt{mine\_branch\_pending}\\
+確定セル集合 & 2本のmask & \texttt{forced\_safe\_mask}, \texttt{forced\_mine\_mask}\\
+確率比較 & 整数交差積比較 & \texttt{candidate\_compare\_left/right}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+以上のように，集合演算は固定幅ビットマスク，集合の要素数はpopcount相当の組合せ加算，探索木は\texttt{assignment}と\texttt{assignment\_depth}のレジスタ，待ち仕事はbitmap付きFIFOとして実装されている．動的メモリや再帰関数は用いず，最大サイズをパラメータで切ることでRTL合成可能な回路へ変換している．
+
+

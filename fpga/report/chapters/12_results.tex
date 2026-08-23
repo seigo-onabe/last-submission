@@ -1,0 +1,45 @@
+\chapter{実機評価と考察}
+\label{chap:results}
+
+\section{speed10の結果}
+提出FPGAを20 MHzで動作させ，\texttt{speed10\_hardware\_1000.csv}の1,000盤を集計した．結果を表\ref{tab:speed10}に示す．
+\begin{table}[tb]
+\centering
+\caption{speed10実機1,000盤の集計}
+\label{tab:speed10}
+\begin{tabular}{l r}
+実行盤面数&1000\\
+完全解答（\texttt{opened\_safe}=安全セル総数）&862\\
+\texttt{solver\_stalled}=1&138\\
+地雷を1個以上開いた盤面&592\\
+平均スコア&0.9038487\\
+最低／最高スコア&0.0116 / 1.0000\\
+総サイクル数&81,110,615\\
+平均サイクル数&81,110.615\\
+最大サイクル数&1,310,106\\
+\end{tabular}
+\end{table}
+
+20 MHzを仮定すると平均処理時間は\(81110.615/(20\times10^6)=4.0555\,\mathrm{ms}\)である．ここでCSVの\texttt{cycles}はFPGA内の盤面処理サイクルであり，PCからのJTAG転送時間やTclの待ち時間を含む壁時計時間ではない．
+
+\section{スコア分布}
+各盤面のスコアは\texttt{score\_scaled}/10000として保存される．図\ref{fig:score-hist}はレポート生成時にCSVから作成するヒストグラムの配置例であり，1.0付近に完全解答が集まり，stalled盤面では安全セルを多く開けても地雷開示ペナルティにより低下する．
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=.9\linewidth,height=55mm,xmin=0,xmax=1,ylabel={盤面数},xlabel={スコア},ymajorgrids]
+\addplot[ybar,fill=blue!35] coordinates {(0.05,2)(0.15,8)(0.25,12)(0.35,18)(0.45,25)(0.55,34)(0.65,48)(0.75,88)(0.85,210)(0.95,555)};
+\end{axis}
+\end{tikzpicture}
+\caption{スコア分布の描画例（最終版ではCSVから自動生成する）}
+\label{fig:score-hist}
+\end{figure}
+
+\section{サイクル数の解釈}
+盤面ごとの処理量は盤面サイズ，開示連鎖，制約コンポーネントの大きさに依存する．特に全列挙は変数数を\(k\)とすると候補上限が\(2^k\)であり，\texttt{solver\_small\_enumerator}の最大12変数では4,096通りとなる．制約の多い盤面では\texttt{profile\_builder}，\texttt{profile\_enumeration}，\texttt{profile\_candidate}のサイクルが増え，最大値1,310,106サイクルの要因になり得る．一方，安全セルの連鎖開示が大きい盤面では\texttt{minesweeper\_game\_core}のFIFO走査が支配的になる．
+
+\section{stalledの意味}
+stalledは通信異常ではない．\texttt{result\_stalled}は，局所制約，R4全体制約，R5差分制約，列挙結果，許可された確率選択を使っても次の選択を一意に決められないことを表す．したがって138盤では処理はプロトコル上正常終了している．一方，\texttt{transport\_error}や\texttt{protocol\_error}が0であることにより，アルゴリズム上の停止と実装上の通信エラーを分離できる．
+
+\section{考察}
+完全解答率86.2\%と平均スコア90.38487\%の差は，安全セルをすべて開けられなかった盤面，または地雷を開けた盤面が含まれるためである．R5の部分集合差分と最大12変数の全列挙は局所的な曖昧さを減らすが，互いに分離したコンポーネントを残り地雷数で完全結合するグローバル条件付けは現行提出設定で無効である．そのため，数学的には利用可能な情報が残っていても，回路の固定容量・処理時間上限によりstalledとなる場合がある．

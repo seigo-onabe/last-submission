@@ -1,0 +1,211 @@
+\chapter{行き詰まり時の選択戦略と確率フィードバック}
+\label{ch:stall-strategy}
+
+論理推論は，盤面の情報が少ない序盤や，複数の制約が独立している場面では次の安全セルを一意に決められない．本設計では，論理推論を無限に待つのではなく，決められた順序で「角の開示」，「小成分の候補確率」，「辺中央の救済選択」を試し，それでも選べなければ\emph{stalled}として正常終了する．stalledはRTLのクラッシュや通信エラーではなく，「現在観測した制約から許可された選択を使い切った」という結果である．
+
+提出トップ\filepath{rtl/top/minesweeper_jtag_submission_local_top.v}は次のパラメータでこの戦略を有効にする．
+
+\begin{table}[tb]
+\centering
+\caption{提出トップの行き詰まり対策パラメータ}
+\label{tab:stall-parameters}
+\begin{tabular}{lll}
+\toprule
+パラメータ & 値 & 意味\\
+\midrule
+\texttt{ENABLE\_CORNER\_ON\_STALL} & 1 & 初手以外の角を試す\\
+\texttt{MAX\_PROBABILITY\_GUESSES} & 15 & 1盤面での候補選択上限\\
+\texttt{BASE\_PROBABILITY\_GUESSES} & 8 & 通常の候補選択回数\\
+\texttt{ENABLE\_SATURATING\_HALF\_SAFE\_FEEDBACK} & 1 & 安全セル半数未満の間だけ追加候補を許す\\
+\texttt{ENABLE\_LOW\_SCORE\_EDGE\_RESCUE} & 1 & 安全開示16未満で辺中央を試す\\
+\texttt{LOW\_SCORE\_RESCUE\_SAFE\_THRESHOLD} & 16 & 救済選択を許す安全セル数の上限\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{行き詰まりの定義と制御フロー}
+\label{sec:stall-definition}
+
+トップFSMの\texttt{S\_R4\_CHECK}で，安全FIFO，変更FIFO，dirty FIFOが空になるまで処理を続ける．全体地雷数から安全／地雷が一意に決まらなければR5の比較を行い，それでも変更がなければ\texttt{S\_OPEN\_NEXT}へ入る．\texttt{S\_OPEN\_NEXT}では角戦略が残っていれば次の角を設定し，それも終われば\texttt{S\_COLLECT\_INIT}へ進む．成分収集が終わって候補が得られなければ，確率フィードバックまたは辺中央救済を調べる．いずれも許可されなければ\texttt{stalled<=1'b1}として\texttt{S\_FINISH}へ進む．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=8mm, every node/.style={font=\scriptsize}]
+    \node[block] (logic) {R1--R5\\dirty更新};
+    \node[state,right=of logic] (corner) {\texttt{S\_OPEN\_NEXT}\\角};
+    \node[state,right=of corner] (collect) {\texttt{S\_COLLECT\_*}\\成分収集};
+    \node[state,below=of collect] (prob) {\texttt{S\_PROB\_*}\\確率候補};
+    \node[state,left=of prob] (rescue) {\texttt{S\_RESCUE\_*}\\辺中央};
+    \node[state,right=of prob] (finish) {\texttt{S\_FINISH}\\stalled};
+    \draw[signal] (logic)--node[above]{変化なし}(corner);
+    \draw[signal] (corner)--node[above]{角を使い切る}(collect);
+    \draw[signal] (collect)--node[right]{best候補なし}(prob);
+    \draw[signal] (prob)--node[above]{許可・未知}(logic.west);
+    \draw[signal] (prob)--node[above]{候補なし/上限}(finish);
+    \draw[signal] (prob)--(rescue);
+    \draw[signal] (rescue)--node[below]{4点終了}(finish);
+    \draw[signal] (corner)--(finish);
+  \end{tikzpicture}
+  \caption{論理推論が止まった後の選択制御}
+  \label{fig:stall-flow}
+\end{figure}
+
+\section{角選択}
+\label{sec:corner-selection}
+
+盤面の角は，最初の開示による0セル連鎖を起こしやすく，座標の境界処理も単純である．初手は\texttt{opening\_step=1}で$(0,0)$を選ぶ．最初の推論が止まったとき\texttt{S\_OPEN\_NEXT}は次の順に\texttt{active\_x/y}を設定する．
+
+\begin{enumerate}
+  \item \texttt{opening\_step=1}：$(width-1,0)$（右上）．
+  \item \texttt{opening\_step=2}：$(0,height-1)$（左下）．
+  \item \texttt{opening\_step=3}：$(width-1,height-1)$（右下）．
+\end{enumerate}
+
+各候補は直ちに選択せず，\texttt{S\_OPEN\_READ\_ADDR}→\texttt{S\_OPEN\_READ\_WAIT}→\texttt{S\_OPEN\_CHECK}で\texttt{u\_state\_ram}の状態を読む．\texttt{CELL\_UNKNOWN}なら\texttt{S\_ISSUE}へ進み，既に開示済みまたは予約済みなら次の角へ進む．この3状態は同期RAMの1サイクル遅延を吸収するために必要である．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[x=12mm,y=12mm, every node/.style={font=\scriptsize}]
+    \draw[thick] (0,0) rectangle (6,4);
+    \foreach \x/\name in {0/初手,6/右上}{\fill (\x,4) circle (2pt);}
+    \fill (0,0) circle (2pt) node[below left]{左下};
+    \fill (6,0) circle (2pt) node[below right]{右下};
+    \node[above] at (0,4) {\texttt{opening\_step=1}};
+    \draw[->,very thick,signalblue] (0,4)--(6,4);
+    \draw[->,very thick,signalblue] (6,4)--(0,0);
+    \draw[->,very thick,signalblue] (0,0)--(6,0);
+    \node[align=center] at (3,2) {未知状態を\texttt{ram\_read\_state}で確認\\既開示の角はスキップ};
+  \end{tikzpicture}
+  \caption{角選択の順序（初手を含む）}
+  \label{fig:corner-order}
+\end{figure}
+
+角選択で新しい開示が得られると通常の\texttt{S\_WAIT}へ戻り，その開示からR1--R5を再開する．4角を調べ終えてなお結論がなければ，角選択だけで成功したとはみなさず，成分収集へ進む．
+
+\section{成分候補の選択}
+\label{sec:probability-feedback}
+
+\subsection{候補の意味}
+
+成分列挙で有効割当数を$W$，セル$i$が地雷となる割当数を$M_i$とすると，セル$i$の局所地雷確率は
+\begin{equation}
+  P_i=\frac{M_i}{W}.
+\end{equation}
+\texttt{solver\_small\_component\_pipeline}はこの分数を浮動小数点化せず，\texttt{candidate\_mine\_ways}=$M_i$と\texttt{candidate\_total\_ways}=$W$のまま親へ渡す．親FSMの\texttt{best\_candidate\_*}が成分ごとの最小候補を保持し，交差積
+\begin{equation}
+  M_i W_{best}<M_{best}W_i
+  \label{eq:stall-cross-product}
+\end{equation}
+で比較する．同率ならセル番号が小さい方を採用する．\texttt{best\_candidate\_valid}が0の間は最初の閉じた成分候補を無条件に保存する．
+
+\subsection{候補探索のレジスタと状態}
+
+候補収集後，\texttt{S\_COLLECT\_SEED}で\texttt{collector\_seed\_index >= MAX\_CELLS}になると候補選択へ進む．候補があれば\texttt{active\_x <= best\_candidate\_cell \% 19}，\texttt{active\_y <= best\_candidate\_cell / 19}とし，\texttt{S\_PROB\_READ\_ADDR}，\texttt{S\_PROB\_READ\_WAIT}，\texttt{S\_PROB\_CHECK}で未知状態を確認する．\texttt{CELL\_UNKNOWN}なら\texttt{probability\_guess\_count}を増やして\texttt{S\_ISSUE}へ進む．成分処理中に別の制約がセルを確定させていた場合は，候補を再計算せず安全にstall終了する．
+
+\begin{table}[tb]
+\centering
+\caption{確率候補に関するレジスタ}
+\label{tab:probability-registers}
+\begin{tabularx}{\linewidth}{llX}
+\toprule
+レジスタ & 幅 & 役割\\
+\midrule
+\texttt{probability\_guess\_count} & 4 bit & 盤面内の確率選択回数（0〜15）\\
+\texttt{best\_candidate\_cell} & 9 bit & 現時点で最も低い地雷比のセル\\
+\texttt{best\_candidate\_mines} & 13 bit & 上記セルの$M_i$\\
+\texttt{best\_candidate\_ways} & 13 bit & 上記成分の$W_i$\\
+\texttt{component\_candidate\_*} & 32 bit級 & 現在入力された成分候補\\
+\texttt{active\_x/y} & 5 bit×2 & 実際にISSUEする座標\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{候補回数の上限と半数条件}
+\label{sec:half-safe-condition}
+
+提出版では通常8回の確率候補を許可する．条件式は
+\begin{equation}
+  \texttt{probability\_guess\_count}<15
+  \quad\land\quad
+  \texttt{probability\_guess\_count}<8
+  \label{eq:base-probability-condition}
+\end{equation}
+であり，カウンタ0〜7の計8回である．ただし\texttt{ENABLE\_SATURATING\_HALF\_SAFE\_FEEDBACK=1}なので，8回に到達した後も安全セルの半数未満なら追加候補が許可される．
+
+全セル数を$N=width\times height$，総地雷数を$M$，開示済み安全セル数を$O_s$とすると，条件は
+\begin{equation}
+  2O_s<N-M.
+  \label{eq:half-safe-condition}
+\end{equation}
+RTLでは\texttt{half\_safe\_opened\_twice = observed\_safe\_count << 1}，\texttt{half\_safe\_total = adaptive\_board\_cells - mines}として比較する．除算器を使わないため，候補継続の判断が一組の加算／比較回路になる．\texttt{probability\_guess\_count}は4 bitなので15で飽和し，8回以後に継続しても最大15回で止まる．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=7mm, every node/.style={font=\scriptsize}]
+    \node[block] (obs) {\texttt{observed\_safe\_count}};
+    \node[block,right=of obs] (shift) {左シフト1\\$2O_s$};
+    \node[block,right=of shift] (cmp) {比較\\$2O_s<N-M$};
+    \node[block,below=of cmp] (cnt) {\texttt{probability\_guess\_count}<15};
+    \node[block,right=of cmp] (and) {AND\\feedback allowed};
+    \draw[bus] (obs)--(shift)--(cmp)--(and);
+    \draw[bus] (cnt)--(and);
+    \node[align=center,below=8mm of shift] {$N-M$は\texttt{width*height-mines}\\乗除算なし};
+  \end{tikzpicture}
+  \caption{安全セル半数条件の組合せデータパス}
+  \label{fig:half-safe-datapath}
+\end{figure}
+
+なお，\texttt{ENABLE\_ADAPTIVE\_FEEDBACK=0}のため，提出版では\texttt{ADAPTIVE\_FEEDBACK\_SAFE\_THRESHOLD=32}と確率リスク交差積による経路は使用しない．RTLには将来の実験用として残っており，パラメータを1にすれば，8回後かつ安全開示32未満で，候補の期待リスクが全体条件より小さい場合に追加選択できる．
+
+\section{辺中央救済選択}
+\label{sec:edge-rescue}
+
+成分候補がない場合，安全開示数が16未満であれば，\texttt{S\_RESCUE\_NEXT}が4点を試す．\texttt{rescue\_step}に応じた座標は次の通りである．
+\begin{align*}
+  0 &: (\lfloor width/2\rfloor,0) &&\text{上辺中央},\\
+  1 &: (\lfloor width/2\rfloor,height-1) &&\text{下辺中央},\\
+  2 &: (0,\lfloor height/2\rfloor) &&\text{左辺中央},\\
+  3 &: (width-1,\lfloor height/2\rfloor) &&\text{右辺中央}.
+\end{align*}
+\texttt{rescue\_step}は3 bitで保持し，4点を超えない．各点は角と同じく\texttt{S\_RESCUE\_READ\_ADDR}→\texttt{S\_RESCUE\_READ\_WAIT}→\texttt{S\_RESCUE\_CHECK}で状態RAMを確認する．未知なら選択し，既開示なら次へ進む．4点すべてが使えなければ\texttt{stalled}を立てる．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[x=11mm,y=11mm, every node/.style={font=\scriptsize}]
+    \draw[thick] (0,0) rectangle (7,5);
+    \fill[errorred] (3.5,5) circle (2.5pt) node[above=2mm]{step 0};
+    \fill[errorred] (3.5,0) circle (2.5pt) node[below=2mm]{step 1};
+    \fill[errorred] (0,2.5) circle (2.5pt) node[left=2mm]{step 2};
+    \fill[errorred] (7,2.5) circle (2.5pt) node[right=2mm]{step 3};
+    \draw[->,very thick,errorred] (3.5,5)--(3.5,0)--(0,2.5)--(7,2.5);
+    \node[align=center] at (3.5,2.5) {安全開示$<16$かつ候補なし\\未知セルだけをISSUE};
+  \end{tikzpicture}
+  \caption{辺中央救済の4候補}
+  \label{fig:edge-rescue}
+\end{figure}
+
+辺中央は論理的な安全保証を持つ点ではなく，序盤の観測数を増やすための経験的ヒューリスティックである．したがって，本処理で地雷を選んでも\texttt{observed\_mine\_count}に記録され，スコア計算ではペナルティになるが，回路エラーにはならない．
+
+\section{推測とスコアの関係}
+\label{sec:stall-score}
+
+候補選択および救済選択は「安全セルを証明した」結果ではない．選択して地雷が開示されても，\texttt{CELL\_OPEN\_MINE}への遷移は合法であり，\texttt{observed\_mine\_count}を1増やして次の推論へ戻る．一方，すべての安全セルが開示された場合でも，未確定UNKNOWNが残ることがある．\texttt{S\_WAIT\_DRAIN}は安全数が$width\times height-mines$に達したことを検出すると，R4全地雷を適用してから終了する．
+
+この区別により，次の三つの結果を分けて評価できる．
+\begin{enumerate}
+  \item 全安全セル開示：完全解答．
+  \item 地雷を開示したが，その後に安全セルを開示：推測を含むが処理継続．
+  \item 制約，候補，救済を使い切った：\texttt{stalled=1}で正常終了．
+\end{enumerate}
+
+\texttt{protocol\_error=1}となる不正入力（座標外，開示の二重到着，キューoverflowなど）とは異なり，stalledは盤面の難しさに由来するアルゴリズム上の出力である．実機結果CSVではこの二つを別列として集計すべきである．
+
+\section{戦略のハードウェア上のトレードオフ}
+\label{sec:stall-tradeoff}
+
+確率選択の上限を増やすと完全解答率が向上する可能性がある一方，地雷を開く機会と処理クロックが増える．本設計の上限は4 bitカウンタで実装できる15回であり，候補の確率比較は除算器を使わず交差積の乗算器で行う．半数条件はシフトと比較だけである．角／辺選択は確率演算を増やさず，固定個数の状態遷移と状態RAM読出しだけで構成できる．
+
+また，候補を選ぶ前に\texttt{best\_candidate\_valid}をクリアし，成分ごとの候補を逐次比較するため，候補全件をRAMへ保存する必要がない．一方，成分が12変数を超える場合は列挙回路を拡張せず収集から除外するため，そのような盤面ではstalledになりやすい．これは「有限の論理回路で，最悪ケースのリソースを予測可能にする」というFPGA設計上の選択である．
+
+
+

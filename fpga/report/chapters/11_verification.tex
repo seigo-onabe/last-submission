@@ -1,0 +1,36 @@
+\chapter{シミュレーション，実機試験，ビルド設定}
+\label{chap:verification}
+
+\section{RTLシミュレーション}
+シミュレーションのファイルリストは\texttt{sim/official.f}で管理し，\texttt{sim/run\_official\_file.ps1}がIcarus Verilogのコンパイルと実行を自動化する．スクリプトは\texttt{-g2012 -Wall -s tb\_official\_board\_file}を指定し，\texttt{+BOARD\_FILE}，\texttt{+RESULT\_CSV}，\texttt{+START\_BOARD}，\texttt{+MAX\_BOARDS}をシミュレータへ渡す．決定論ソルバを選ぶ場合は\texttt{-Ptb\_official\_board\_file.DETERMINISTIC\_SOLVER=1}を追加し，確率試行回数，adaptive feedback，edge rescueなどをパラメータ化できる．
+
+\texttt{tb\_official\_board\_file.sv}は公式盤面のヘッダを読み，\texttt{begin\_valid/ready}，\texttt{cell\_valid/ready}，\texttt{commit\_valid/ready}を順に駆動する．結果を受けた後は\texttt{result\_snapshot}の各フィールドを照合し，スコア分子・分母から再計算した値とRTLの\texttt{score\_scaled}が一致しなければエラーとする．出力CSVには設定時間，ロード時間，ソルバ時間，スコア時間，総サイクル，プロファイル別サイクル，コンポーネント統計，列挙ノード数まで記録できる．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[>=latex,node distance=9mm,box/.style={draw,rounded corners,align=center,minimum width=31mm,minimum height=10mm}]
+\node[box](file){公式盤面\texttt{BOARD\_FILE}};
+\node[box,right=of file](tb){\texttt{tb\_official\_board\_file}\\ストリーム駆動};
+\node[box,right=of tb](dut){DUT\\core/solver/metrics};
+\node[box,right=of dut](csv){結果CSV\\再計算・照合};
+\draw[->](file)--(tb);\draw[->](tb)--node[above]{ready/valid}(dut);\draw[->](dut)--(csv);
+\end{tikzpicture}
+\caption{公式ファイルシミュレーションの検証経路}
+\end{figure}
+
+\section{Virtual JTAG実機試験}
+\texttt{sim/jtag\_official\_runner.tcl}はQuartus SignalTapスクリプト環境からUSB-Blasterを操作する．最初にVirtual JTAGのversionを読み，プロトコルversion 2と\texttt{BUILD\_ID=0001}を確認する．各盤面についてBEGIN，DATA列，CRC付きCOMMITを送り，STATUSをポーリングして\texttt{result\_available}を待つ．RESULT\_A/B/Cを読み，ACKを送ってスナップショットを解放する．Tcl側のCSVには\texttt{board\_crc}，\texttt{jtag\_retries}，\texttt{transport\_error}，\texttt{protocol\_version}，\texttt{build\_id}も保存されるため，アルゴリズム結果と通信障害を区別できる．
+
+\section{Quartusプロジェクト}
+提出用QSFはトップレベルを\texttt{minesweeper\_jtag\_submission\_local\_top}，出力ディレクトリを\texttt{output\_submission\_local\_mu500}，最適化を\texttt{AGGRESSIVE AREA}，I/O規格を\texttt{3.3-V LVTTL}と指定する．SDCの\texttt{create\_clock -name CLK\_20MHZ -period 50.000 [get\_ports \{CLK\_20MHZ\}]}が20 MHz制約を与え，\texttt{derive\_clock\_uncertainty}で不確実性を導出する．実機では生成したSOFをQuartus Programmerで書き込み，その後Tcl runnerを実行する．
+
+\section{検証項目}
+主なチェックは次の通りである．
+\begin{enumerate}
+\item 盤面ヘッダの幅・高さが1～19，地雷数が0より大きくセル数未満であること．
+\item DATAのordinalが0から連続し，セル値が0～9であること．
+\item CRC不一致，結果上書き，重複開示，プロトコル状態不整合をエラーにすること．
+\item 結果スコアを整数有理式から再計算し，RTL出力と一致させること．
+\item シミュレーションと実機で同一盤面のフィールドが一致すること．
+\end{enumerate}
+

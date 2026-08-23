@@ -1,0 +1,308 @@
+\chapter{決定論的ソルバのアルゴリズムとRTL実装}
+\label{ch:solver-algorithm}
+
+本章では，\filepath{rtl/solver/minesweeper_solver_deterministic.v}（以下，トップ・ソルバ）を中心に，マインスイーパの推論規則をどのように同期回路へ変換したかを説明する．ここでいう「決定論的」とは，開示された数字から論理的に必ず成り立つ結論（安全または地雷）を優先し，それでも結論が得られない場合だけ，後述する限定的な候補選択へ進むという意味である．ソルバは地雷を含む完全盤面を入力として受け取らない．入力されるのは\signalname{reveal_valid}，\signalname{reveal_x}，\signalname{reveal_y}，\signalname{reveal_is_mine}，\signalname{reveal_clue}という開示イベントだけであり，この境界がアルゴリズム上の観測制約をハードウェアとして保証する．
+
+\section{ソルバの観測モデルとセル状態}
+\label{sec:solver-observation}
+
+ソフトウェアのマインスイーパ解答器は通常，盤面配列と既知情報を同じメモリに置いてしまう．本設計では，完全盤面を保持する\modulename{minesweeper_game_core}と，観測情報だけを保持する\modulename{solver_state_ram}を分離した．ゲームコアからソルバへは，選択に応じた開示結果だけが転送される．したがって，ソルバ内部のメモリを調べても，まだ開いていないセルの地雷／安全値は存在しない．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=7mm, every node/.style={font=\small}]
+    \node[block,minimum width=35mm] (game) {\texttt{minesweeper\_game\_core}\\完全盤面 \texttt{board\_mem}};
+    \node[block,right=18mm of game,minimum width=36mm] (solver) {\texttt{minesweeper\_solver\_deterministic}\\観測情報だけ};
+    \node[memory,below=of solver,minimum width=36mm] (ram) {\texttt{knowledge\_mem[0:360]}\\7 bit/セル};
+    \draw[bus] (game.east)--node[above,align=center]{\texttt{reveal\_valid}\\座標・数字・地雷判定}(solver.west);
+    \draw[bus] (solver.west)--node[below,align=center]{\texttt{select\_valid}\\座標のみ}(game.east);
+    \draw[control] (solver.south)--node[right]{書込み／同期読出し}(ram.north);
+    \node[draw,dashed,fit=(game),inner sep=3mm,label={[font=\scriptsize]above:完全盤面側}] {};
+    \node[draw,dashed,fit=(solver)(ram),inner sep=3mm,label={[font=\scriptsize]above:観測可能な知識側}] {};
+  \end{tikzpicture}
+  \caption{ゲームコアとソルバの情報境界}
+  \label{fig:solver-observation-boundary}
+\end{figure}
+
+\subsection{セル状態の符号化}
+
+\modulename{solver_state_ram}の\signalname{knowledge_mem}は361エントリ，1エントリ7 bitである．下位3 bitの状態と上位4 bitの数字を次のように格納する．
+
+\begin{table}[tb]
+\centering
+\caption{\texttt{knowledge\_mem}のセル状態}
+\label{tab:solver-cell-state}
+\begin{tabular}{lll}
+\toprule
+符号 & Verilog定数 & 意味\\
+\midrule
+3'd0 & \texttt{CELL\_UNKNOWN} & 未知セル（まだ開示されていない）\\
+3'd1 & \texttt{CELL\_QUEUED\_SAFE} & 安全と推論され，選択FIFOに入ったセル\\
+3'd2 & \texttt{CELL\_OPEN\_SAFE} & 開示済み安全セル（数字を保持）\\
+3'd3 & \texttt{CELL\_KNOWN\_MINE} & 論理的に地雷と分かったセル\\
+3'd4 & \texttt{CELL\_OPEN\_MINE} & 実際に選択して開いた地雷\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+この分類により，例えば\texttt{CELL\_QUEUED\_SAFE}をもう一度安全キューへ積まない，開示済み安全セルを誤って再選択しない，という検査が行える．セルを地雷と論理判定しても，実際に開くまでは\texttt{CELL\_KNOWN\_MINE}であり，\texttt{observed\_mine\_count}には加算されない．
+
+\subsection{固定ストライドによるアドレス}
+
+盤面の有効幅は1〜19だが，内部アドレスのストライドは常に19である．座標$(x,y)$は次式で9 bitのセル番号へ変換する．
+\begin{equation}
+  i=19y+x=(y\mathbin{\ll}4)+(y\mathbin{\ll}1)+y+x.
+  \label{eq:solver-stride}
+\end{equation}
+\texttt{reveal\_index\_wide}，\texttt{scan\_cell\_index}，\texttt{active\_cell\_index}などがこの式を使う．定数19を乗算器で実現せずシフトと加算に分解するため，合成器が小さな加算回路として実装できる．幅が10の場合でも行末の9セルは未使用であり，範囲検査は\texttt{pending\_reveal\_x < width}，\texttt{pending\_reveal\_y < height}で行う．
+
+\section{全体FSMと1クロック処理}
+\label{sec:solver-fsm}
+
+トップ・ソルバは\regname{state}（6 bit）を状態レジスタとする単一の大きなFSMである．主要状態を図\ref{fig:solver-main-fsm}に示す．全状態を一度に説明すると読者が見失うため，\emph{開示処理}，\emph{R1--R4処理}，\emph{R5／成分処理}，\emph{推測処理}の4段階に分ける．各段階で外部RAMを読む場合は，アドレス設定状態，読出し待ち状態，データ判定状態を分けている．これは\texttt{solver\_state\_ram}の同期読出し（アドレスをクロックで登録し，次のクロックで\texttt{read\_data}を得る）に対応する．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=8mm, every node/.style={font=\scriptsize}, >=Latex]
+    \node[state] (idle) {\texttt{S\_IDLE}};
+    \node[state,right=of idle] (clear) {\texttt{S\_CLEAR}};
+    \node[state,right=of clear] (issue) {\texttt{S\_ISSUE}};
+    \node[state,right=of issue] (wait) {\texttt{S\_WAIT}};
+    \node[state,below=of wait] (pop) {\texttt{S\_POP\_SAFE}};
+    \node[state,left=of pop] (scan) {\texttt{S\_SCAN\_WAIT}};
+    \node[state,left=of scan] (r4) {\texttt{S\_R4\_CHECK}};
+    \node[state,below=of r4] (r5) {\texttt{S\_R5\_INIT}\,/\,\texttt{COMPARE}};
+    \node[state,right=of r5] (comp) {\texttt{S\_COMP\_*}};
+    \node[state,right=of comp] (collect) {\texttt{S\_COLLECT\_*}};
+    \node[state,below=of collect] (prob) {\texttt{S\_PROB\_*}};
+    \node[state,left=of prob] (finish) {\texttt{S\_FINISH}};
+    \draw[signal] (idle)--node[above]{\texttt{start}}(clear);
+    \draw[signal] (clear)--node[above]{\texttt{ram\_clear\_done}}(issue);
+    \draw[signal] (issue)--node[above]{select handshake}(wait);
+    \draw[signal] (wait)--node[right]{\texttt{cascade\_done}}(scan);
+    \draw[signal] (wait)--(pop);
+    \draw[signal] (pop)--(scan);
+    \draw[signal] (scan)--(r4);
+    \draw[signal] (r4)--(r5);
+    \draw[signal] (r5)--(comp);
+    \draw[signal] (comp)--(collect);
+    \draw[signal] (collect)--(prob);
+    \draw[signal] (prob)--(issue);
+    \draw[signal] (collect)--(finish);
+    \draw[signal] (r5)--(finish);
+    \draw[signal] (r4)--(finish);
+    \draw[signal] (finish)--(idle);
+  \end{tikzpicture}
+  \caption{決定論的ソルバの上位FSM（詳細状態をグループ化）}
+  \label{fig:solver-main-fsm}
+\end{figure}
+
+\begin{table}[tb]
+\centering
+\caption{トップ・ソルバの主な状態レジスタと役割}
+\label{tab:solver-fsm-registers}
+\begin{tabularx}{\linewidth}{llX}
+\toprule
+レジスタ & 幅 & 役割\\
+\midrule
+\texttt{state} & 6 bit & 逐次処理の現在状態（\texttt{S\_IDLE}〜\texttt{S\_RESCUE\_CHECK}）\\
+\texttt{width},\texttt{height},\texttt{mines} & 5,5,9 bit & 盤面形状と総地雷数のラッチ\\
+\texttt{active\_x},\texttt{active\_y} & 5,5 bit & 次に\texttt{select\_*}へ出す座標\\
+\texttt{scan\_x},\texttt{scan\_y},\texttt{scan\_clue} & 5,5,4 bit & 近傍走査／全体走査の中心\\
+\texttt{unknown\_count},\texttt{remaining\_mines} & 9,9 bit & 未知セル数と未確定地雷数\\
+\texttt{queued\_safe\_count} & 9 bit & 安全FIFOに入った未処理セル数\\
+\texttt{pending\_reveal\_*} & 9+5+5+1+4 bit & 同期RAM検査中の1件の開示イベント\\
+\texttt{constraint\_valid} & 361 bit & 各数字セルのキャッシュ制約が有効かを示すbitmap\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{開始とクリア}
+
+\texttt{S\_IDLE}で\signalname{start}を受けると，\texttt{width}，\texttt{height}，\texttt{mines}，各カウンタをラッチし，\texttt{unknown\_count <= board\_width * board\_height}，\texttt{remaining\_mines <= total\_mines}とする．同時に\texttt{ram\_clear\_start}と\texttt{fifo\_clear}を1にする．\texttt{solver\_state\_ram}は\texttt{clear\_busy}中の\texttt{clear\_index}を0から360まで1セルずつ書き換えるため，361クロック後に\texttt{ram\_clear\_done}が出る．盤面形状が範囲外，地雷数が0，または地雷数がセル数以上なら\texttt{protocol\_error}を立てて\texttt{S\_ERROR}へ遷移する．
+
+\subsection{選択と開示の1エントリ・パイプライン}
+
+\texttt{S\_ISSUE}では\texttt{select\_valid=1}となり，\texttt{select\_ready=1}のクロックで\texttt{active\_x},\texttt{active\_y}をゲームコアへ渡す．その後\texttt{S\_WAIT}で\texttt{reveal\_valid}を受ける．開示情報は直接RAMへ書かず，\texttt{pending\_reveal\_index}，\texttt{pending\_reveal\_is\_mine}，\texttt{pending\_reveal\_clue}へ一度保存する．\texttt{ram\_read\_index}にその番号を出し，次クロックの\texttt{ram\_read\_state}と突き合わせてから\texttt{ram\_write\_from\_reveal}を生成する．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[x=18mm,y=7mm, every node/.style={font=\scriptsize}]
+    \draw[->] (0,0)--(8,0) node[right]{クロック};
+    \foreach \x/\t in {0/0,1/1,2/2,3/3,4/4,5/5,6/6,7/7}{\draw (\x,0.1)--(\x,-0.1) node[below]{\t};}
+    \node[left] at (-.1,1.0) {\texttt{reveal\_valid}};
+    \draw[signalblue,very thick] (1,1)--(2,1)--(2,0.8)--(3,0.8);
+    \node[left] at (-.1,2.0) {RAM address};
+    \draw[registergreen,very thick] (2,2)--(4,2);
+    \node[left] at (-.1,3.0) {\texttt{ram\_read\_state}};
+    \draw[registergreen,very thick] (3,3)--(5,3);
+    \node[left] at (-.1,4.0) {\texttt{ram\_write\_from\_reveal}};
+    \draw[errorred,very thick] (4,4)--(5,4);
+    \node[align=left] at (4.5,5) {受信\quad アドレス\quad 同期RAM読出し\quad 検査・書込み};
+  \end{tikzpicture}
+  \caption{開示イベントを同期RAMへ反映する概念タイミング}
+  \label{fig:reveal-pipeline}
+\end{figure}
+
+\texttt{reveal\_transition\_valid}は，座標範囲，手掛かり値（安全なら8以下），現在状態，カウンタの整合性，変更FIFOへの投入可能性を同時に検査する．地雷開示なら\texttt{remaining\_mines}を減らし，安全開示なら\texttt{observed\_safe\_count}を増やす．この検査に失敗しても黙って状態を上書きせず，\texttt{protocol\_error}を立てる．
+
+\section{局所推論R1--R3}
+\label{sec:solver-r123}
+
+開示された数字セルを中心$c$とし，その8近傍のうち未知セル集合を$U$，既知地雷数を$m$，表示数字を$n$とする．制約は
+\begin{equation}
+  \sum_{u\in U}u=n-m,\qquad u\in\{0,1\}
+  \label{eq:local-constraint}
+\end{equation}
+である．左辺の各$u$はそのセルが地雷なら1，安全なら0を表す．
+
+\begin{itemize}
+  \item R1：$n-m=0$なら，$U$の全セルを安全とする．
+  \item R2：$n-m=|U|$なら，$U$の全セルを地雷とする．
+  \item R3：$0<n-m<|U|$なら，局所情報だけでは確定しない（制約をキャッシュする）．
+  \item 矛盾：$n<m$または$n-m>|U|$なら，観測列または回路状態が不正である．
+\end{itemize}
+
+この処理を実装する\modulename{solver_neighbor_scan}は，\texttt{direction}（4 bit）を0〜7へ進め，\texttt{ST\_ADDR}→\texttt{ST\_READ}の2状態で近傍RAMを読む．\texttt{unknown\_x[0:7]}と\texttt{unknown\_y[0:7]}には未知近傍の座標を保持し，\texttt{unknown\_mask[direction]}には該当方向を保存する．\texttt{known\_mines}と\texttt{unknown\_count}を8近傍ぶん集計した後，\texttt{ST\_CLASSIFY}でR1/R2を判定する．確定セルは\texttt{result\_valid}，\texttt{result\_index}，\texttt{result\_state}として1件ずつ出力され，親FSMが安全FIFOおよび変更FIFOへ同時に投入できたとき\texttt{result\_ready}を返す．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=9mm, every node/.style={font=\scriptsize}]
+    \node[state] (idle) {\texttt{ST\_IDLE}};
+    \node[state,right=of idle] (addr) {\texttt{ST\_ADDR}};
+    \node[state,right=of addr] (read) {\texttt{ST\_READ}};
+    \node[state,below=of read] (class) {\texttt{ST\_CLASSIFY}};
+    \node[state,left=of class] (emit) {\texttt{ST\_EMIT}};
+    \draw[signal] (idle)--node[above]{\texttt{start}}(addr);
+    \draw[signal] (addr)--(read);
+    \draw[signal] (read)--node[right]{direction=7}(class);
+    \draw[signal] (read)--++(0,-8mm)-|node[below]{direction++}(addr);
+    \draw[signal] (class)--node[below]{R1/R2}(emit);
+    \draw[signal] (emit)--++(0,8mm)-|node[above]{未送信}(emit);
+    \draw[signal] (emit)--(idle);
+  \end{tikzpicture}
+  \caption{\texttt{solver\_neighbor\_scan}のFSM}
+  \label{fig:neighbor-scan-fsm}
+\end{figure}
+
+例えば数字3の周囲に未知セルが5個あり，既知地雷が1個なら残りは2個である．このとき$0<2<5$なのでR3となり，未知5セルのビットマスクとremaining=2を\texttt{solver\_constraint\_cache}へ保存する．数字3，既知地雷3個，未知セル2個ならremaining=0でR1となり，2セルを\texttt{CELL\_QUEUED\_SAFE}へ書く．
+
+\section{安全・変更・dirtyキューのハードウェア}
+\label{sec:solver-fifos}
+
+推論結果を配列の再走査で処理すると，毎回361セルを調べる必要がある．そこで本設計は3本の固定容量FIFOを使用する．安全セル用の\modulename{solver_safe_fifo}，状態が変化したセル用の\modulename{solver_dirty_fifo}（インスタンス名\texttt{u\_change\_fifo}），数字セル再計算用の同FIFO（\texttt{u\_dirty\_fifo}）である．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=8mm, every node/.style={font=\scriptsize}]
+    \node[block] (ram) {\texttt{u\_state\_ram}\\セル状態を書換え};
+    \node[queue,right=of ram] (safe) {\texttt{u\_safe\_fifo}\\確定安全セル};
+    \node[queue,below=of safe] (change) {\texttt{u\_change\_fifo}\\変更セル};
+    \node[queue,below=of ram] (dirty) {\texttt{u\_dirty\_fifo}\\再計算候補};
+    \node[block,right=of dirty] (scan) {\texttt{u\_neighbor\_scan}\\数字近傍を再評価};
+    \draw[bus] (ram)--node[above]{\texttt{CELL\_QUEUED\_SAFE}}(safe);
+    \draw[bus] (ram)--node[left]{\texttt{change\_push\_*}}(change);
+    \draw[bus] (change)--node[below]{8近傍生成}(dirty);
+    \draw[bus] (dirty)--(scan);
+    \draw[control] (scan)--node[above]{\texttt{scan\_result\_*}}(ram);
+    \draw[signal] (safe.east)--++(12mm,0)|-(ram.east);
+  \end{tikzpicture}
+  \caption{変更伝搬と安全セル選択のキュー配線}
+  \label{fig:solver-queue-wiring}
+\end{figure}
+
+各FIFOは\texttt{queue\_mem[0:360]}，9 bitの\texttt{head}／\texttt{tail}，9 bitの\texttt{count}，361 bitのbitmapを持つ．安全FIFOの\texttt{queued\_bitmap}，dirty FIFOの\texttt{pending\_bitmap}が既登録セルを検出し，\texttt{push\_duplicate}を返す．同じセルを重複投入するのはエラーではなく，既に同じ仕事が待っているため無視できる状態である．一方，満杯で重複でもない投入は\texttt{overflow\_error}をラッチする．
+
+FIFOはpushとpopが同一クロックに成立する\texttt{2'b11}も処理する．その場合は\texttt{queue\_mem[tail]}を書き込み，\texttt{tail}と\texttt{head}を同時に進めるため，容量を一時的に増減させない．ポインタは361の次に0へ戻る円環構造である．
+
+状態が変化したセル$(x,y)$を\texttt{u\_change\_fifo}から取り出すと，親FSMの\texttt{S\_CHANGE\_WALK}で方向0〜8を\texttt{changed\_direction}に保持し，8近傍へ変換する．範囲内の各セルを\texttt{u\_dirty\_fifo}へ入れる．\texttt{S\_DIRTY\_CHECK}で取り出したセルが\texttt{CELL\_OPEN\_SAFE}なら，保存していた\texttt{ram\_read\_clue}を\texttt{scan\_clue}へ移し，\texttt{scan\_start}を1クロックだけ発生させる．これが変更箇所から制約を増分更新するdirty機構である．
+
+\section{グローバル推論R4}
+\label{sec:solver-r4}
+
+局所数字を使わなくても，盤面全体で残り地雷数が0または未知セル数と等しい場合には結論が出る．トップFSMの\texttt{S\_R4\_CHECK}で，まず\texttt{remaining\_mines > unknown\_count}を矛盾として検出する．次に次の二つを判定する．
+\begin{align}
+  \texttt{remaining\_mines}=0 &\Rightarrow \texttt{R4\_ALL\_SAFE},\\
+  \texttt{remaining\_mines}=\texttt{unknown\_count} &\Rightarrow \texttt{R4\_ALL\_MINE}.
+\end{align}
+\texttt{S\_R4\_SCAN\_ADDR}→\texttt{S\_R4\_SCAN\_WAIT}→\texttt{S\_R4\_SCAN\_APPLY}で全セルを順番にRAM読出しする．未知セルだけを安全FIFO／既知地雷へ更新するため，開示済みセルはスキップする．全安全の場合は安全FIFOが空になるまで\texttt{S\_POP\_SAFE}へ戻り，全地雷の場合は\texttt{S\_FINISH}へ進む．
+
+\section{制約キャッシュとR5部分集合差分}
+\label{sec:solver-r5}
+
+R3で得た局所制約を次のように表す．数字セル$c$に対応する未知セル集合を$A$，残り地雷数を$a$とすると，$A=a$とは「集合$A$の地雷数が$a$」という意味である．二つの制約$A=a$，$B=b$に対し，$A\subseteq B$なら
+\begin{equation}
+  B\setminus A=b-a.
+  \label{eq:r5-subset}
+\end{equation}
+を得る．差集合の地雷数が0なら全セル安全，差集合の要素数と同じなら全セル地雷，それ以外なら新しい派生制約となる．これを本レポートではR5と呼ぶ．
+
+\modulename{solver_constraint_cache}は361行×12 bit（8 bit未知マスク＋4 bit remaining）の同期RAMである．\texttt{read\_a\_*}と\texttt{read\_b\_*}の2読出しポートにより，R5比較器へ二つの制約を供給する．キャッシュRAM自体を毎回全消去せず，親の361 bit\texttt{constraint\_valid}を新盤面開始時に0クリアする．\texttt{S\_SCAN\_WAIT}で近傍スキャンが完了すると，\texttt{scan\_constraint\_count != 0}の場合だけ\texttt{write\_valid}を出し，その数字セルの制約を上書きする．
+
+\begin{figure}[tb]
+  \centering
+  \begin{tikzpicture}[node distance=8mm, every node/.style={font=\scriptsize}]
+    \node[memory] (cache) {\texttt{constraint\_mem}\\361\textrm{行}\\mask[7:0]+remaining[3:0]};
+    \node[block,right=of cache] (cmp) {\texttt{solver\_r5\_compare}\\5×5座標へ整列};
+    \node[memory,below=of cmp] (store) {\texttt{derived\_constraint\_store}\\256スロット hash表};
+    \node[queue,left=of store] (apply) {\texttt{r5\_apply\_mask}\\25 bit};
+    \draw[bus] (cache)--node[above]{A/B読出し}(cmp);
+    \draw[bus] (cmp)--node[right]{派生mask・mine数}(store);
+    \draw[bus] (cmp)--node[below]{0または全1}(apply);
+    \draw[control] (apply)--node[left]{\texttt{CELL\_QUEUED\_SAFE}/\texttt{KNOWN\_MINE}}(cache);
+  \end{tikzpicture}
+  \caption{R5のキャッシュ，比較器，派生制約ストア}
+  \label{fig:r5-wiring}
+\end{figure}
+
+\subsection{5×5共通座標への変換}
+
+3×3近傍マスクは数字セルごとの相対座標なので，そのままでは二つのマスクをANDできない．\modulename{solver_r5_compare}は二つの中心座標の小さい側から1を引いた点を5×5窓の\texttt{base\_x},\texttt{base\_y}とし，8方向を同じ絶対座標へ埋め込んで\texttt{mask\_a},\texttt{mask\_b}（各25 bit）を作る．
+
+例えば
+\begin{equation}
+  A=\{p,q\},\quad a=1,\qquad B=\{p,q,r,s\},\quad b=2
+\end{equation}
+なら，$A\subseteq B$をビット演算\texttt{(mask\_a \& ~mask\_b)==0}で検出し，差分$\{r,s\}$とremaining=1を得る．差分を25 bitの\texttt{r5\_compare\_difference\_mask}に出力し，base座標とともに保存または即時適用する．
+
+比較器は同一マスクでremainingが異なる場合，差分のremainingが0〜要素数に収まらない場合を\texttt{contradiction}とする．非自明な差分は\texttt{derived\_valid}として\texttt{S\_R5\_STORE\_WAIT}へ渡す．
+
+\subsection{派生制約ストア}
+
+\modulename{solver_derived_constraint_store}は52 bitのエントリを256スロット持つ．内訳は25 bit mask，7 bit signed base-x，7 bit signed base-y，5 bit mines，8 bit board-generationである．挿入時は\texttt{ST\_NORMALIZE\_Y}，\texttt{ST\_NORMALIZE\_X}でmaskの左上の占有セルまで行列をシフトし，異なる5×5窓から同じ集合が得られたとき同じ表現になるようにする．
+
+ハッシュはmaskの各バイトのXORとbase座標のXORで8 bitを生成し，衝突時は\texttt{probe\_index}を1ずつ進める．\texttt{probe\_count}が\texttt{MAX\_PROBES=32}に達すれば\texttt{overflow}を立てる．既存エントリのmask，座標，generationが一致しmine数も一致すれば\texttt{duplicate}，mine数だけ異なれば\texttt{contradiction}となる．
+
+\subsection{R5の親FSM配線}
+
+\texttt{S\_R5\_INIT}は\texttt{r5\_center\_x/y}と\texttt{r5\_candidate\_offset}を0にする．\texttt{S\_R5\_CANDIDATE}ではoffset 0〜24を走査し，\texttt{constraint\_valid}が立つ二つのセルだけを比較する．適用可能な結論なら\texttt{r5\_apply\_mask}，\texttt{r5\_apply\_is\_mine}，\texttt{r5\_apply\_base\_x/y}へラッチする．\texttt{S\_R5\_APPLY\_ADDR}と\texttt{S\_R5\_APPLY\_WAIT}でmaskの最下位1ビットを選ぶ組合せ回路を待ち，\texttt{S\_R5\_APPLY}でそのセルを1件ずつRAMへ反映する．適用ごとに\texttt{r5\_apply\_mask <= r5\_apply\_mask \& ~r5\_apply\_bit\_mask}としてビットを消す．
+
+安全判定なら安全FIFOと変更FIFOの両方が受け入れ可能になるまで\texttt{r5\_queues\_ready}を待つ．地雷判定なら安全FIFOだけは不要だが，変更FIFOは必須である．この配線により，状態RAMの更新と再計算依頼が片方だけ成功する不整合を防ぐ．
+
+\section{ハードウェアとしての不変条件とエラー処理}
+\label{sec:solver-invariants}
+
+ソルバは単に推論を行うだけでなく，入力ストリームが内部状態と矛盾していないかを検査する．代表的な不変条件を表\ref{tab:solver-invariants}にまとめる．
+
+\begin{table}[tb]
+\centering
+\caption{ソルバの主な不変条件}
+\label{tab:solver-invariants}
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+検査 & 実装上の条件\\
+\midrule
+開示座標 & \texttt{pending\_reveal\_x/y}が幅・高さ以内，indexが361未満\\
+状態遷移 & 未知セルからの安全／地雷反映，または既に予約された同種状態への反映だけを許す\\
+地雷数 & \texttt{remaining\_mines <= unknown\_count}，0未満になる遷移を禁止\\
+制約 & 数字より既知地雷が多い，または残り地雷が未知数を超える場合を矛盾とする\\
+FIFO & 重複はbitmapで無視し，非重複の満杯投入はoverflowとして停止\\
+コンポーネント適用 & \texttt{CELL\_UNKNOWN}への新規結論，または同じ結論の再適用のみ許可\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+エラー状態\texttt{S\_ERROR}では\texttt{protocol\_error}を保持し，\texttt{busy=0},\texttt{done=1}として終了する．例えば\texttt{reveal\_valid}が1エントリの保留中にさらに到着した場合，\texttt{S\_WAIT\_DRAIN}で検出してエラーとする．この設計は，異常入力を推論の一部として扱ってしまうより，原因を外部へ明示できる点で実験時のデバッグに有効である．
+
+
+

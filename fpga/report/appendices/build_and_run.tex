@@ -1,0 +1,41 @@
+\chapter{ビルドおよび実行手順}
+\label{app:build-run}
+
+\section{RTLシミュレーション}
+リポジトリルートから次のPowerShellコマンドを実行する．
+\begin{verbatim}
+.\fpga\sim\run_official_file.ps1 `
+  -BoardFile .\fpga\official\board_pack_1000_fpga.txt `
+  -ResultCsv fpga\simulation_1000.csv `
+  -MaxBoards 1000 `
+  -MaxProbabilityGuesses 15 `
+  -BaseProbabilityGuesses 8 `
+  -SaturatingHalfSafeFeedback `
+  -LowScoreEdgeRescue `
+  -LowScoreRescueSafeThreshold 16 `
+  -Deterministic
+\end{verbatim}
+
+\section{Quartusコンパイル}
+Quartus Prime Lite 24.1stdを用い，次を実行する．
+\begin{verbatim}
+quartus_sh --flow compile `
+  .\fpga\quartus\minesweeper_submission_local_mu500
+\end{verbatim}
+制約ファイル\filepath{minesweeper_mu500.sdc}では\signalname{CLK_20MHZ}に周期\SI{50}{ns}，すなわち\SI{20}{MHz}のクロックを定義している．
+
+\section{実機書込みと1000盤試験}
+\begin{verbatim}
+quartus_pgm -m jtag -o `
+  "p;fpga\deliverables\minesweeper_submission_local_mu500.sof@1"
+
+quartus_stp -t fpga/sim/jtag_official_runner.tcl `
+  fpga/official/board_pack_1000_fpga.txt `
+  fpga/hardware_1000.csv 1000 0 fast
+\end{verbatim}
+
+\section{本文の生成}
+本報告書はLuaLaTeXを前提とする．TeX Live環境で\code{fpga/report}へ移動し，次を実行する．
+\begin{verbatim}
+latexmk -lualatex main.tex
+\end{verbatim}

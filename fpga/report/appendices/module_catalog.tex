@@ -1,0 +1,52 @@
+\chapter{モジュール一覧}
+\label{app:module-catalog}
+
+\footnotesize
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.45\linewidth}>{\raggedright\arraybackslash}p{0.47\linewidth}}
+\caption{RTLモジュールと主な役割}\label{tab:module-catalog}\\
+\toprule
+モジュール & 主な役割\\
+\midrule
+\endfirsthead
+\toprule
+モジュール & 主な役割\\
+\midrule
+\endhead
+\modulename{minesweeper_jtag_submission_local_top} & 提出用パラメータを固定する最上位ラッパ\\
+\modulename{minesweeper_jtag_top} & JTAG/ROM入力，演算系，結果保持を接続するトップ\\
+\modulename{minesweeper_mu500_system} & ソルバ，評価，速度制御，表示を統合\\
+\modulename{minesweeper_deterministic_system} & ゲームコアと決定論的ソルバを接続\\
+\modulename{minesweeper_game_core} & 完全盤面の保持，選択受付，0セルのBFS連鎖開示\\
+\modulename{minesweeper_solver_deterministic} & 開示情報だけを用いる推論ソルバ本体\\
+\modulename{solver_state_ram} & セル状態と開示済み手掛かりの同期RAM\\
+\modulename{solver_safe_fifo} & 確定安全セルの重複抑止付きFIFO\\
+\modulename{solver_dirty_fifo} & 再評価対象セルの重複抑止付きFIFO\\
+\modulename{solver_neighbor_scan} & 数字セルの8近傍走査と局所推論\\
+\modulename{solver_constraint_cache} & 数字セルごとの局所制約キャッシュ\\
+\modulename{solver_r5_compare} & 二制約の部分集合差分計算\\
+\modulename{solver_derived_constraint_store} & 正規化した派生制約のハッシュ表\\
+\modulename{solver_component_adapter} & 局所マスクをセル番号ストリームへ変換\\
+\modulename{solver_component_builder} & 最大12変数・16制約の連結成分を構築\\
+\modulename{solver_small_enumerator} & 制約を満たす割当の深さ優先完全列挙\\
+\modulename{solver_forced_cell_walker} & 確定変数を盤面セル番号へ逆変換\\
+\modulename{solver_small_component_pipeline} & 変換，構築，列挙，結果出力を統括\\
+\modulename{board_stream_controller} & 密な行優先入力を固定ストライド19へ変換\\
+\modulename{jtag_protocol_engine} & 64 bitホストコマンドの解釈と応答生成\\
+\modulename{virtual_jtag_shift64} & JTAGクロック領域の64 bitシフトレジスタ\\
+\modulename{virtual_jtag_mailbox} & JTAGと20 MHz領域間の1コマンドCDC\\
+\modulename{result_snapshot} & ACKまで1盤面分の結果を保持\\
+\modulename{board_rom_loader} & 3枚の小規模スモークテスト盤を供給\\
+\modulename{minesweeper_metrics} & 盤面別・累積スコアと回数を計算\\
+\modulename{unsigned_divider} & 32サイクルの符号なし復元除算器\\
+\modulename{minesweeper_display_formatter} & 数値をBCDおよび7セグメントパターンへ変換\\
+\modulename{mu500_7seg_latch_driver} & 64桁と64 LEDのラッチ選択信号を駆動\\
+\modulename{solver_speed_control} & FSM用clock enableとheartbeatを生成\\
+\modulename{minesweeper_solver_four_corners} & 比較用の4隅選択ソルバ\\
+\modulename{minesweeper_four_corners_system} & 比較用ソルバとゲームコアを接続\\
+\modulename{button_press_debouncer} & 機械式ボタンの同期化とデバウンス（提出トップでは未使用）\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\section{提出構成と比較用構成}
+提出用QSFは共通設定\filepath{minesweeper_mu500.qsf}を読み込んだ後，トップレベルを\modulename{minesweeper_jtag_submission_local_top}へ上書きする．したがって，QSFに列挙される全モジュールが提出時の実行経路に存在するとは限らない．特に\modulename{minesweeper_solver_four_corners}系は比較用であり，提出ラッパは\code{DETERMINISTIC_SOLVER=1}を指定する．

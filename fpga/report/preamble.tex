@@ -1,0 +1,52 @@
+\usepackage{luatexja-fontspec}
+\usepackage{geometry}
+\geometry{top=25mm,bottom=25mm,left=25mm,right=25mm}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,longtable,tabularx,array,multirow}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{siunitx}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,automata,backgrounds,calc,chains,fit,matrix,positioning,shapes.geometric,shapes.multipart}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!45!black,citecolor=green!35!black,urlcolor=blue!55!black}
+\usepackage{cleveref}
+
+\definecolor{signalblue}{RGB}{35,93,153}
+\definecolor{registergreen}{RGB}{46,125,92}
+\definecolor{errorred}{RGB}{178,48,48}
+\definecolor{codegray}{RGB}{247,247,247}
+\tikzset{
+  box/.style={draw,rounded corners,thick,align=center,minimum height=9mm,minimum width=26mm,fill=blue!5},
+  block/.style={draw,rounded corners,thick,align=center,minimum height=9mm,minimum width=26mm,fill=blue!5},
+  memory/.style={draw,thick,align=center,minimum height=10mm,minimum width=27mm,fill=green!9},
+  queue/.style={draw,thick,align=center,minimum height=9mm,minimum width=25mm,fill=orange!12},
+  state/.style={draw,circle,thick,align=center,minimum size=13mm,fill=blue!5},
+  bus/.style={-{Latex[length=2.2mm]},very thick,signalblue},
+  signal/.style={-{Latex[length=2mm]},thick},
+  control/.style={-{Latex[length=2mm]},thick,dashed,registergreen},
+}
+
+\lstdefinelanguage{Verilog}{
+  morekeywords={module,endmodule,input,output,inout,wire,reg,integer,parameter,localparam,always,begin,end,if,else,case,endcase,assign,function,endfunction,generate,endgenerate,for,posedge,negedge},
+  sensitive=true,
+  morecomment=[l]{//},morecomment=[s]{/*}{*/},morestring=[b]"
+}
+\lstset{language=Verilog,basicstyle=\ttfamily\small,backgroundcolor=\color{codegray},frame=single,breaklines=true,numbers=left,numberstyle=\tiny,columns=fullflexible,keepspaces=true,captionpos=b}
+
+% The arguments are RTL identifiers and paths.  Detokenizing permits the
+% literal underscores used in Verilog names without repetitive TeX escaping.
+\newcommand{\signalname}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\regname}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\statename}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\modulename}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\filepath}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}

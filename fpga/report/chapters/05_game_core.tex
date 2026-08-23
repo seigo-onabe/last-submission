@@ -1,0 +1,63 @@
+\chapter{盤面管理回路：\texttt{minesweeper\_game\_core}}
+\label{ch:game-core}
+
+\section{役割と情報の所有権}
+\texttt{minesweeper\_game\_core} は盤面の完全な値を所有し，受理されたセル選択を開示イベントへ変換する唯一のモジュールである．入力 \texttt{load\_value=9} は地雷，0〜8は数字セルを表す．ソルバは \texttt{reveal\_is\_mine}，\texttt{reveal\_clue} と座標だけを受け取るため，未開示セルの値を直接参照できない．
+
+\section{主要レジスタとメモリ}
+\begin{description}
+  \item[\texttt{board\_mem[0:360]}] 4ビットの完全盤面RAM．セル値9を地雷として保持する．
+  \item[\texttt{opened}] 開封済みセルの361ビットビットマップ．既開封セルの再選択を拒否する．
+  \item[\texttt{scheduled}] 連鎖展開キューへ登録済みであることを示す361ビットビットマップ．同じセルの二重登録を防ぐ．
+  \item[\texttt{queue\_mem[0:360]}] \(y,x\) を結合した10ビット座標を格納する円環FIFO．
+  \item[\texttt{queue\_head}, \texttt{queue\_tail}, \texttt{queue\_count}] FIFOの読み出し位置，書き込み位置，要素数．\texttt{queue\_increment} は360の次を0に戻す．
+  \item[\texttt{current\_x}, \texttt{current\_y}] 現在REVEALする座標．\texttt{scan\_dx}, \texttt{scan\_dy} は3\(\times\)3近傍の走査位置．
+  \item[\texttt{opened\_safe\_count}, \texttt{opened\_mine\_count}] 開いた安全セル数と地雷数．評価回路へ渡す．
+\end{description}
+
+\section{FSM}
+状態レジスタ \texttt{state} は次の5状態を持つ．
+\begin{enumerate}
+  \item \texttt{STATE\_IDLE}: 設定，セルロード，または選択をready/validで受理する．
+  \item \texttt{STATE\_DEQUEUE}: \texttt{queue\_head} から座標を読み，\texttt{current\_x/y} へ移す．
+  \item \texttt{STATE\_REVEAL}: 開封ビットを立て，盤面値を読み，\texttt{reveal\_*} を1クロック生成する．
+  \item \texttt{STATE\_SCAN}: 0セルの周囲8セルを一つずつ検査する．
+  \item \texttt{STATE\_CHECK}: FIFOが空なら \texttt{cascade\_done} を出してIDLEへ戻り，非空ならDEQUEUEへ戻る．
+\end{enumerate}
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[>=latex, node distance=15mm, every node/.style={draw,rounded corners,align=center,font=\small}]
+  \node (idle) {\texttt{STATE\_IDLE}\\設定/ロード/選択};
+  \node[right=of idle] (dq) {\texttt{STATE\_DEQUEUE}\\FIFO pop};
+  \node[right=of dq] (rv) {\texttt{STATE\_REVEAL}\\開示イベント};
+  \node[below=of rv] (sc) {\texttt{STATE\_SCAN}\\3x3近傍};
+  \node[left=of sc] (ck) {\texttt{STATE\_CHECK}\\空/継続判定};
+  \draw[->] (idle)--node[above]{選択受理}(dq);
+  \draw[->] (dq)--(rv);
+  \draw[->] (rv)--node[right]{値=0}(sc);
+  \draw[->] (rv)--node[above]{値≠0/地雷}(ck);
+  \draw[->] (sc)--(ck);
+  \draw[->] (ck)--node[above]{\texttt{queue\_count}≠0}(dq);
+  \draw[->] (ck)--node[left]{空}(idle);
+\end{tikzpicture}
+\caption{ゲームコアの開示・連鎖FSM}
+\label{fig:game-core-fsm}
+\end{figure}
+
+\section{選択の受理と安全性検査}
+IDLEでは \texttt{select\_ready} が \texttt{run\_enable}，\texttt{configured}，IDLE状態，かつ設定・ロード転送がないことの論理積になる．\texttt{select\_index\_calc} は \((select\_y\ll4)+(select\_y\ll1)+select\_y+select\_x\) であり，範囲外座標または \texttt{opened[index]} が1なら \texttt{select\_rejected} と \texttt{cascade\_done} を出す．受理時は \texttt{queue\_mem[0]} に座標を書き，\texttt{scheduled[index]} を1にしてDEQUEUEへ遷移する．
+
+\section{REVEALとイベント配線}
+DEQUEUEではFIFOの座標を \texttt{current\_x/y} にラッチし，REVEALの次クロックで \texttt{board\_mem[current\_index\_calc]} を参照する．値が9なら \texttt{reveal\_is\_mine=1}，\texttt{reveal\_clue=0} とし，\texttt{opened\_mine\_count} を加算する．安全セルでは \texttt{reveal\_is\_mine=0}，\texttt{reveal\_clue=board\_mem[...]} とし，\texttt{opened\_safe\_count} を加算する．これらの信号は非同期な組合せ出力ではなく，クロックに同期した \texttt{reveal\_valid} イベントである．
+
+\section{0セルの幅優先探索}
+0セルを開いた場合，\texttt{scan\_dx} と \texttt{scan\_dy} を0へ戻しSCANに入る．各クロックで
+\[
+  n_x=\texttt{current\_x+scan\_dx-1},\quad
+  n_y=\texttt{current\_y+scan\_dy-1}
+\]
+を計算し，中心(\(dx=1,dy=1\))を除く8近傍を検査する．範囲内，未登録（\texttt{!scheduled[n]}），非地雷（\texttt{board\_mem[n] != 9}）なら，座標を \texttt{queue\_mem[queue\_tail]} に書き，\texttt{queue\_tail} と \texttt{queue\_count} を更新する．\texttt{scheduled} を先に立てることで，同じセルが複数の親セルから発見されても一度だけキューに入る．\texttt{queue\_count==MAX\_CELLS} のときは \texttt{protocol\_error} を立てる．
+
+\section{実装上の注意}
+Verilogの配列をソフトウェア配列と同じ感覚で多重に読み出せるとは限らない．本コアでは一回のFSM状態で処理する対象を限定し，座標計算を組合せ信号，状態・ポインタ更新をクロック同期レジスタへ分けている．また，\texttt{width} と \texttt{height} は設定時に合法性判定され，不正な値なら \texttt{configured=0} と \texttt{protocol\_error=1} になる．この範囲検査とFIFO満杯検査は，入力データが正しい場合だけでなく，通信不良時に回路が無限に動き続けることを防ぐ．

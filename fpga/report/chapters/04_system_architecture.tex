@@ -1,0 +1,39 @@
+\chapter{システム全体構成}
+\label{ch:architecture}
+
+\section{トップ階層}
+提出トップ \texttt{minesweeper\_jtag\_submission\_local\_top} は，物理ピンと動作パラメータを定める薄いラッパである．その内部の \texttt{minesweeper\_jtag\_top} から，JTAG，ストリーム制御，決定論的システム，表示・メトリクスが接続される．外部には \texttt{CLK\_20MHZ}，\texttt{RESET\_N}，\texttt{HEX\_A/HEX\_B} と9本の表示選択 \texttt{SEG\_SEL}，8本のセグメントバス \texttt{SEG\_A}〜\texttt{SEG\_H} がある．
+
+\section{決定論的システム境界}
+\texttt{minesweeper\_deterministic\_system} は，ゲームコアとソルバを接続する統合境界である．設定を受理すると \texttt{active\_width}，\texttt{active\_height}，\texttt{active\_mines} レジスタへ保存し，ソルバにはこれらのラッチ値を渡す．ゲーム側の \texttt{game\_error} とソルバ側の \texttt{solver\_error} は
+\[
+\texttt{protocol\_error=game\_error\;|\;solver\_error}
+\]
+として外部へ出力される．選択は \texttt{select\_valid/select\_ready}，観測は \texttt{reveal\_valid} と \texttt{cascade\_done} で同期する．主な結果線は \texttt{solver\_busy}，\texttt{solver\_done}，\texttt{solver\_stalled}，\texttt{selections\_issued}，\texttt{opened\_safe\_count}，\texttt{opened\_mine\_count}，\texttt{cycle\_count} である．
+
+\section{盤面ストリームの座標変換}
+外部のセル番号 \texttt{cell\_ordinal} は，実際の盤面幅に対する密な行優先番号である．\texttt{board\_stream\_controller} 内の \texttt{load\_x}，\texttt{load\_y} はロードのたびに更新され，ゲームコアへは固定ストライドの \texttt{load\_index}=19\,\texttt{load\_y}+\texttt{load\_x} を出力する．\texttt{expected\_ordinal} と \texttt{expected\_cells} は，セルが飛ばされず，ヘッダで宣言した個数と一致することを監視するレジスタである．
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[>=latex, node distance=7mm, every node/.style={font=\small}]
+  \node[draw,align=center] (h) {BEGIN\\\texttt{begin\_width,height,mines}};
+  \node[draw,right=of h,align=center] (cfg) {\texttt{ST\_CFG}\\\texttt{cfg\_valid}};
+  \node[draw,right=of cfg,align=center] (ld) {\texttt{ST\_LOAD}\\\texttt{load\_x/y}};
+  \node[draw,right=of ld,align=center] (cm) {\texttt{ST\_COMMIT}\\\texttt{start\_solver}};
+  \node[draw,right=of cm,align=center] (run) {\texttt{ST\_RUN}\\\texttt{result\_valid}};
+  \draw[->] (h)--(cfg)--(ld)--(cm)--(run);
+  \draw[->] (run) |- ($(h.south)+(0,-9mm)$) -| (h.south);
+\end{tikzpicture}
+\caption{\texttt{board\_stream\_controller}の状態遷移}
+\label{fig:board-stream-fsm}
+\end{figure}
+
+\section{信号の一回の処理}
+設定転送が成立するクロックでゲームコアは \texttt{width}，\texttt{height} を更新し，\texttt{configured} を合法性判定結果にする．続くセル転送では \texttt{board\_mem[load\_index]} が更新される．全セルを受け取って \texttt{COMMIT} が成立すると，ソルバが最初の \texttt{select\_x/y} を発行する．ゲームコアは選択を受理すると \texttt{reveal\_*} を生成し，ソルバはそのイベントを取り込んで次の選択を決める．この繰返しは，ゲームコアから \texttt{cascade\_done} が出て選択待ちへ戻るまで続く．
+
+\section{観測可能性の境界}
+完全な地雷配置を保持する配列は \texttt{minesweeper\_game\_core} の \texttt{board\_mem} だけである．ソルバ側の \texttt{solver\_state\_ram} はセル状態と開示された数字だけを保持し，未開示セルの真値は書き込まれない．この構造は単なるソフトウェア上の規約ではなく，モジュールの入出力ポートから強制される情報フローである．
+
+\section{リセットと実行許可}
+リセット直後は各FSMがアイドル状態となり，キューの \texttt{queue\_head}，\texttt{queue\_tail}，\texttt{queue\_count} とエラーラッチがクリアされる．\texttt{run\_enable}=0 の間はゲームコアの状態更新を停止し，JTAG設定などアイドル時に許された処理だけを受ける．提出設定の \texttt{FORCE\_FULL\_SPEED=1} ではソルバの有効化を常時許可する．
