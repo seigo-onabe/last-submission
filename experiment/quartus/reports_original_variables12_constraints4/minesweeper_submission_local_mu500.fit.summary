@@ -1,0 +1,16 @@
+Fitter Status : Successful - Sun Aug 23 19:35:00 2026
+Quartus Prime Version : 24.1std.0 Build 1077 03/04/2025 SC Lite Edition
+Revision Name : minesweeper_submission_local_mu500
+Top-level Entity Name : minesweeper_jtag_submission_local_top
+Family : Cyclone IV E
+Device : EP4CE30F23I7
+Timing Models : Final
+Total logic elements : 22,546 / 28,848 ( 78 % )
+    Total combinational functions : 21,301 / 28,848 ( 74 % )
+    Dedicated logic registers : 8,331 / 28,848 ( 29 % )
+Total registers : 8331
+Total pins : 83 / 329 ( 25 % )
+Total virtual pins : 0
+Total memory bits : 38,943 / 608,256 ( 6 % )
+Embedded Multiplier 9-bit elements : 17 / 132 ( 13 % )
+Total PLLs : 0 / 4 ( 0 % )

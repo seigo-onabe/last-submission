@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iostream>
 #include <string_view>
+#include <map>
 
 
 // ===== model =====
@@ -169,6 +170,29 @@ class ProbabilityEngine {
 // ===== scoring =====
 
 namespace minesweeper {
+
+struct TimingCounters {
+  std::int64_t deterministic = 0;
+  std::int64_t local_condition = 0;
+  std::int64_t global_condition = 0;
+  std::int64_t subset_rule = 0;
+  std::int64_t probability = 0;
+  std::int64_t component_split = 0;
+  std::int64_t enumeration = 0;
+  std::int64_t combination = 0;
+  std::int64_t probability_selection = 0;
+};
+
+TimingCounters g_timing;
+constexpr std::uint64_t kNodeHistogramBinWidth = 10'000;
+std::map<std::uint64_t, std::uint64_t> g_node_histogram;
+std::map<std::uint64_t, std::uint64_t> g_aborted_components;
+
+std::int64_t elapsedUs(std::chrono::steady_clock::time_point start,
+                       std::chrono::steady_clock::time_point end) {
+  return std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+      .count();
+}
 
 class QueryEngine;
 
@@ -689,6 +713,7 @@ GuessDecision ProbabilityEngine::chooseCell(
     int known_mines,
     const std::array<CellState, kMaxCells>& states,
     const std::array<std::uint8_t, kMaxCells>& clues) const {
+  const auto probability_start = std::chrono::steady_clock::now();
   const int cell_count = width * height;
   std::array<int, kMaxCells> cell_to_variable{};
   cell_to_variable.fill(-1);
@@ -710,6 +735,7 @@ GuessDecision ProbabilityEngine::chooseCell(
   }
 
   std::vector<RawConstraint> raw_constraints;
+  const auto component_start = std::chrono::steady_clock::now();
   std::vector<bool> is_frontier(unknown_cells.size(), false);
   for (int center = 0; center < cell_count; ++center) {
     if (states[center] != CellState::kOpenSafe) {
@@ -792,15 +818,29 @@ GuessDecision ProbabilityEngine::chooseCell(
     }
     components[component_index].constraints.push_back(std::move(local));
   }
+  g_timing.component_split +=
+      elapsedUs(component_start, std::chrono::steady_clock::now());
 
   bool all_exact = true;
+  // 実験用にノード数の打ち切りを無効化する。
   const std::uint64_t maximum_nodes =
       enumerationNodeBudget(width, height, total_mines);
   for (Component& component : components) {
+    const auto enumeration_start = std::chrono::steady_clock::now();
     enumerateComponent(component, remaining_mines, maximum_nodes);
+    g_timing.enumeration +=
+        elapsedUs(enumeration_start, std::chrono::steady_clock::now());
+    const std::uint64_t node_bin =
+        (component.enumeration_nodes / kNodeHistogramBinWidth) *
+        kNodeHistogramBinWidth;
+    ++g_node_histogram[node_bin];
+    if (!component.exact) {
+      ++g_aborted_components[maximum_nodes];
+    }
     all_exact &= component.exact;
   }
 
+  const auto combination_start = std::chrono::steady_clock::now();
   std::vector<double> probabilities(
       unknown_cells.size(),
       unknown_cells.empty()
@@ -941,9 +981,12 @@ GuessDecision ProbabilityEngine::chooseCell(
       }
     }
   }
+  g_timing.combination +=
+      elapsedUs(combination_start, std::chrono::steady_clock::now());
 
   GuessDecision decision;
   decision.exact = all_exact;
+  const auto selection_start = std::chrono::steady_clock::now();
   int best_unknown_neighbors = std::numeric_limits<int>::max();
   constexpr double kTieTolerance = 1e-18;
   for (int variable = 0;
@@ -963,6 +1006,10 @@ GuessDecision ProbabilityEngine::chooseCell(
       best_unknown_neighbors = neighbor_count;
     }
   }
+  g_timing.probability_selection +=
+      elapsedUs(selection_start, std::chrono::steady_clock::now());
+  g_timing.probability +=
+      elapsedUs(probability_start, std::chrono::steady_clock::now());
   return decision;
 }
 
@@ -1015,7 +1062,10 @@ SolverStatistics Solver::solve(QueryEngine& query_engine) {
       applyReveals(query_engine.select(queued_safe_cell));
       continue;
     }
+    const auto deterministic_start = std::chrono::steady_clock::now();
     propagateDeterministicRules();
+    g_timing.deterministic +=
+        elapsedUs(deterministic_start, std::chrono::steady_clock::now());
     const int safe_cell = popSafeCell();
     if (safe_cell >= 0) {
       applyReveals(query_engine.select(safe_cell));
@@ -1158,6 +1208,7 @@ void Solver::propagateDeterministicRules() {
   while (changed) {
     changed = false;
     constraint_count_ = 0;
+    const auto local_start = std::chrono::steady_clock::now();
 
     // 制約のスナップショットを作る。
     for (int cell = 0; cell < cellCount(); ++cell) {
@@ -1192,15 +1243,23 @@ void Solver::propagateDeterministicRules() {
         }
       }
     }
+    g_timing.local_condition +=
+        elapsedUs(local_start, std::chrono::steady_clock::now());
     if (changed) {
       continue;
     }
 
+    const auto global_start = std::chrono::steady_clock::now();
     changed |= applyGlobalMineCount();
+    g_timing.global_condition +=
+        elapsedUs(global_start, std::chrono::steady_clock::now());
     if (changed) {
       continue;
     }
+    const auto subset_start = std::chrono::steady_clock::now();
     changed |= applySubsetRules();
+    g_timing.subset_rule +=
+        elapsedUs(subset_start, std::chrono::steady_clock::now());
   }
 }
 
@@ -1366,7 +1425,7 @@ namespace minesweeper {
 
 struct Options {
   // paiza.IOの2秒制限に対し、集計と出力のため250 msを確保する。
-  static constexpr int kLimitMs = 1750;
+  static constexpr int kLimitMs = 600000;
   bool details = false;
   std::string input_path;
 };
@@ -1431,7 +1490,7 @@ int main(int argc, char** argv) {
     // 2コア以上を確認できた場合のみ2スレッドで並列化する。
     const unsigned int hardware_threads = std::thread::hardware_concurrency();
 #ifndef MINESWEEPER_THREADS
-#define MINESWEEPER_THREADS 2
+#define MINESWEEPER_THREADS 1
 #endif
     const int thread_count =
         hardware_threads >= MINESWEEPER_THREADS ? MINESWEEPER_THREADS : 1;
@@ -1559,6 +1618,24 @@ int main(int argc, char** argv) {
               << "total_score       ";
     printScaledScore(std::cout, total_score_scaled);
     std::cout << '\n';
+    std::cout << "deterministic_us          " << g_timing.deterministic << '\n'
+              << "local_condition_us       " << g_timing.local_condition << '\n'
+              << "global_condition_us      " << g_timing.global_condition << '\n'
+              << "subset_rule_us           " << g_timing.subset_rule << '\n'
+              << "probability_us           " << g_timing.probability << '\n'
+              << "component_split_us       " << g_timing.component_split << '\n'
+              << "enumeration_us           " << g_timing.enumeration << '\n'
+              << "combination_us           " << g_timing.combination << '\n'
+              << "probability_selection_us " << g_timing.probability_selection << '\n';
+    std::cout << "node_histogram_bin_width " << kNodeHistogramBinWidth << '\n'
+              << "node_count_lower_bound frequency\n";
+    for (const auto& [lower_bound, frequency] : g_node_histogram) {
+      std::cout << lower_bound << ' ' << frequency << '\n';
+    }
+    std::cout << "aborted_components_by_limit\n";
+    for (const auto& [limit, frequency] : g_aborted_components) {
+      std::cout << limit << ' ' << frequency << '\n';
+    }
     std::cout << "elapsed_ms        " << std::fixed << std::setprecision(3)
               << elapsed.count() / 1000.0 << '\n';
   } catch (const std::exception& error) {

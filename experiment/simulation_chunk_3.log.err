@@ -1,0 +1,9 @@
+rtl/solver/solver_component_builder.v:79: warning: @* is sensitive to all 12 words in array 'variable_cells'.
+rtl/solver/solver_component_builder.v:90: warning: @* is sensitive to all 8 words in array 'constraint_masks'.
+rtl/solver/solver_component_builder.v:92: warning: @* is sensitive to all 8 words in array 'constraint_mines'.
+rtl/solver/solver_component_builder.v:99: warning: @* is sensitive to all 12 words in array 'variable_cells'.
+rtl/solver/solver_component_builder.v:103: warning: @* is sensitive to all 8 words in array 'constraint_masks'.
+rtl/solver/solver_component_builder.v:104: warning: @* is sensitive to all 8 words in array 'constraint_mines'.
+rtl/solver/solver_small_enumerator.v:140: warning: @* is sensitive to all 13 words in array 'ways_by_mines'.
+rtl/solver/solver_small_enumerator.v:144: warning: @* is sensitive to all 156 words in array 'mine_ways'.
+rtl/solver/solver_small_enumerator.v:147: warning: @* is sensitive to all 12 words in array 'mine_total'.

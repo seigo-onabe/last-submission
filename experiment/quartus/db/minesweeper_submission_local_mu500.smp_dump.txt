@@ -1,0 +1,171 @@
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|mu500_7seg_latch_driver:u_display|state
+Name state.ST_SETUP state.ST_HOLD state.ST_LATCH 
+state.ST_SETUP 0 0 0 
+state.ST_LATCH 1 0 1 
+state.ST_HOLD 1 1 0 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_display_formatter:u_formatter|state
+Name state.ST_WRITE state.ST_CONVERT state.ST_LOAD state.ST_CLEAR state.ST_COMMIT 
+state.ST_CLEAR 0 0 0 0 0 
+state.ST_LOAD 0 0 1 1 0 
+state.ST_CONVERT 0 1 0 1 0 
+state.ST_WRITE 1 0 0 1 0 
+state.ST_COMMIT 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_metrics:u_metrics|state
+Name state.S_SAFE_START state.S_IDLE state.S_COMMIT state.S_SAFE_WAIT 
+state.S_IDLE 0 0 0 0 
+state.S_SAFE_START 1 1 0 0 
+state.S_SAFE_WAIT 0 1 0 1 
+state.S_COMMIT 0 1 1 0 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|state
+Name state.S_RESCUE_CHECK state.S_RESCUE_READ_WAIT state.S_RESCUE_READ_ADDR state.S_RESCUE_NEXT state.S_PROB_CHECK state.S_PROB_READ_WAIT state.S_PROB_READ_ADDR state.S_COLLECT_SOLVE state.S_COLLECT_SCAN_NEXT state.S_COLLECT_LOAD state.S_COLLECT_READ_WAIT state.S_COLLECT_READ_ADDR state.S_COLLECT_SEED state.S_COLLECT_INIT state.S_OPEN_CHECK state.S_OPEN_READ_WAIT state.S_OPEN_READ_ADDR state.S_OPEN_NEXT state.S_COMP_APPLY state.S_COMP_APPLY_WAIT state.S_COMP_APPLY_ADDR state.S_COMP_WAIT state.S_COMP_SOLVE state.S_COMP_LOAD_B state.S_COMP_LOAD_A state.S_COMP_CLEAR state.S_R5_APPLY state.S_R5_APPLY_WAIT state.S_R5_APPLY_ADDR state.S_R5_COMPARE state.S_R5_CANDIDATE state.S_R5_INIT state.S_DIRTY_CHECK state.S_DIRTY_READ_WAIT state.S_DIRTY_READ_ADDR state.S_DIRTY_POP state.S_CHANGE_WALK state.S_CHANGE_POP state.S_R4_SCAN_APPLY state.S_R4_SCAN_WAIT state.S_R4_SCAN_ADDR state.S_R4_CHECK state.S_POP_CHECK state.S_POP_READ_WAIT state.S_POP_READ_ADDR state.S_WAIT_DRAIN state.S_ERROR state.S_FINISH state.S_POP_SAFE state.S_SCAN_WAIT state.S_R5_STORE_WAIT state.S_WAIT state.S_ISSUE state.S_CLEAR state.S_IDLE 
+state.S_IDLE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+state.S_CLEAR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 
+state.S_ISSUE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 1 
+state.S_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 1 
+state.S_R5_STORE_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 
+state.S_SCAN_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 1 
+state.S_POP_SAFE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 
+state.S_FINISH 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1 
+state.S_ERROR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1 
+state.S_WAIT_DRAIN 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1 
+state.S_POP_READ_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 1 
+state.S_POP_READ_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 1 
+state.S_POP_CHECK 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R4_CHECK 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R4_SCAN_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R4_SCAN_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R4_SCAN_APPLY 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_CHANGE_POP 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_CHANGE_WALK 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_DIRTY_POP 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_DIRTY_READ_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_DIRTY_READ_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_DIRTY_CHECK 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_INIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_CANDIDATE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_COMPARE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_APPLY_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_APPLY_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_R5_APPLY 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_CLEAR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_LOAD_A 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_LOAD_B 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_SOLVE 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_APPLY_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_APPLY_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COMP_APPLY 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_OPEN_NEXT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_OPEN_READ_ADDR 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_OPEN_READ_WAIT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_OPEN_CHECK 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_INIT 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_SEED 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_READ_ADDR 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_READ_WAIT 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_LOAD 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_SCAN_NEXT 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_COLLECT_SOLVE 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_PROB_READ_ADDR 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_PROB_READ_WAIT 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_PROB_CHECK 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_RESCUE_NEXT 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_RESCUE_READ_ADDR 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_RESCUE_READ_WAIT 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+state.S_RESCUE_CHECK 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_small_component_pipeline:u_small_component_pipeline|state
+Name state.ST_CAND_OUTPUT state.ST_CAND_COMPARE state.ST_CAND_READ state.ST_ERROR state.ST_COMPLETE state.ST_WALK_WAIT state.ST_WALK_START state.ST_ENUM_WAIT state.ST_ENUM_START state.ST_ENUM_LOAD state.ST_BUILDER_WAIT state.ST_BUILDER_FINISH state.ST_LOAD 
+state.ST_LOAD 0 0 0 0 0 0 0 0 0 0 0 0 0 
+state.ST_BUILDER_FINISH 0 0 0 0 0 0 0 0 0 0 0 1 1 
+state.ST_BUILDER_WAIT 0 0 0 0 0 0 0 0 0 0 1 0 1 
+state.ST_ENUM_LOAD 0 0 0 0 0 0 0 0 0 1 0 0 1 
+state.ST_ENUM_START 0 0 0 0 0 0 0 0 1 0 0 0 1 
+state.ST_ENUM_WAIT 0 0 0 0 0 0 0 1 0 0 0 0 1 
+state.ST_WALK_START 0 0 0 0 0 0 1 0 0 0 0 0 1 
+state.ST_WALK_WAIT 0 0 0 0 0 1 0 0 0 0 0 0 1 
+state.ST_COMPLETE 0 0 0 0 1 0 0 0 0 0 0 0 1 
+state.ST_ERROR 0 0 0 1 0 0 0 0 0 0 0 0 1 
+state.ST_CAND_READ 0 0 1 0 0 0 0 0 0 0 0 0 1 
+state.ST_CAND_COMPARE 0 1 0 0 0 0 0 0 0 0 0 0 1 
+state.ST_CAND_OUTPUT 1 0 0 0 0 0 0 0 0 0 0 0 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_small_component_pipeline:u_small_component_pipeline|solver_forced_cell_walker:u_walker|state
+Name state.ST_IDLE state.ST_EMIT state.ST_SCAN 
+state.ST_IDLE 0 0 0 
+state.ST_SCAN 1 0 1 
+state.ST_EMIT 1 1 0 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_small_component_pipeline:u_small_component_pipeline|solver_small_enumerator:u_enumerator|state
+Name state.ST_LEGACY_NEXT state.ST_LEGACY_CONSTRAINT state.ST_LEGACY_ASSIGN state.ST_FINISH state.ST_BACKTRACK state.ST_RECORD state.ST_EXPAND state.ST_CHECK_CONSTRAINT state.ST_CHECK_NODE state.ST_VALIDATE state.ST_CLEAR state.ST_IDLE 
+state.ST_IDLE 0 0 0 0 0 0 0 0 0 0 0 0 
+state.ST_CLEAR 0 0 0 0 0 0 0 0 0 0 1 1 
+state.ST_VALIDATE 0 0 0 0 0 0 0 0 0 1 0 1 
+state.ST_CHECK_NODE 0 0 0 0 0 0 0 0 1 0 0 1 
+state.ST_CHECK_CONSTRAINT 0 0 0 0 0 0 0 1 0 0 0 1 
+state.ST_EXPAND 0 0 0 0 0 0 1 0 0 0 0 1 
+state.ST_RECORD 0 0 0 0 0 1 0 0 0 0 0 1 
+state.ST_BACKTRACK 0 0 0 0 1 0 0 0 0 0 0 1 
+state.ST_FINISH 0 0 0 1 0 0 0 0 0 0 0 1 
+state.ST_LEGACY_ASSIGN 0 0 1 0 0 0 0 0 0 0 0 1 
+state.ST_LEGACY_CONSTRAINT 0 1 0 0 0 0 0 0 0 0 0 1 
+state.ST_LEGACY_NEXT 1 0 0 0 0 0 0 0 0 0 0 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_small_component_pipeline:u_small_component_pipeline|solver_component_adapter:u_adapter|state
+Name state.ST_EMIT state.ST_SCAN state.ST_BEGIN state.ST_IDLE state.ST_END 
+state.ST_IDLE 0 0 0 0 0 
+state.ST_BEGIN 0 0 1 1 0 
+state.ST_SCAN 0 1 0 1 0 
+state.ST_EMIT 1 0 0 1 0 
+state.ST_END 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_derived_constraint_store:u_derived_constraint_store|state
+Name state.ST_READ state.ST_NORMALIZE_X state.ST_NORMALIZE_Y state.ST_IDLE state.ST_COMPARE 
+state.ST_IDLE 0 0 0 0 0 
+state.ST_NORMALIZE_Y 0 0 1 1 0 
+state.ST_NORMALIZE_X 0 1 0 1 0 
+state.ST_READ 1 0 0 1 0 
+state.ST_COMPARE 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_solver_deterministic:u_solver|solver_neighbor_scan:u_neighbor_scan|state
+Name state.ST_CLASSIFY state.ST_READ state.ST_ADDR state.ST_IDLE state.ST_EMIT 
+state.ST_IDLE 0 0 0 0 0 
+state.ST_ADDR 0 0 1 1 0 
+state.ST_READ 0 1 0 1 0 
+state.ST_CLASSIFY 1 0 0 1 0 
+state.ST_EMIT 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|minesweeper_mu500_system:u_system|minesweeper_deterministic_system:g_deterministic.u_core|minesweeper_game_core:u_game|state
+Name state.STATE_SCAN state.STATE_REVEAL state.STATE_DEQUEUE state.STATE_IDLE state.STATE_CHECK 
+state.STATE_IDLE 0 0 0 0 0 
+state.STATE_DEQUEUE 0 0 1 1 0 
+state.STATE_REVEAL 0 1 0 1 0 
+state.STATE_SCAN 1 0 0 1 0 
+state.STATE_CHECK 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|board_stream_controller:u_stream|state
+Name state.ST_COMMIT state.ST_LOAD state.ST_CFG state.ST_IDLE state.ST_RUN 
+state.ST_IDLE 0 0 0 0 0 
+state.ST_CFG 0 0 1 1 0 
+state.ST_LOAD 0 1 0 1 0 
+state.ST_COMMIT 1 0 0 1 0 
+state.ST_RUN 0 0 0 1 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|jtag_protocol_engine:u_protocol|exec_state
+Name exec_state.EX_COMMIT exec_state.EX_DATA exec_state.EX_BEGIN exec_state.EX_IDLE 
+exec_state.EX_IDLE 0 0 0 0 
+exec_state.EX_BEGIN 0 0 1 1 
+exec_state.EX_DATA 0 1 0 1 
+exec_state.EX_COMMIT 1 0 0 1 
+
+State Machine - |minesweeper_jtag_submission_local_top|minesweeper_jtag_top:u_top|board_rom_loader:u_rom|state
+Name state.ST_WAIT state.ST_COMMIT state.ST_CELLS state.ST_BEGIN state.ST_DONE 
+state.ST_BEGIN 0 0 0 0 0 
+state.ST_CELLS 0 0 1 1 0 
+state.ST_COMMIT 0 1 0 1 0 
+state.ST_WAIT 1 0 0 1 0 
+state.ST_DONE 0 0 0 1 1 

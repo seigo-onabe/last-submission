@@ -1,0 +1,14 @@
+Analysis & Synthesis Status : Successful - Mon Aug 17 20:30:31 2026
+Quartus Prime Version : 24.1std.0 Build 1077 03/04/2025 SC Lite Edition
+Revision Name : minesweeper_submission_local_mu500
+Top-level Entity Name : minesweeper_jtag_submission_local_top
+Family : Cyclone IV E
+Total logic elements : 26,045
+    Total combinational functions : 22,183
+    Dedicated logic registers : 8,645
+Total registers : 8645
+Total pins : 83
+Total virtual pins : 0
+Total memory bits : 38,943
+Embedded Multiplier 9-bit elements : 17
+Total PLLs : 0

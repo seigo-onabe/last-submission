@@ -1,0 +1,9 @@
+source minesweeper_mu500.qsf
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
+set_global_assignment -name TOP_LEVEL_ENTITY minesweeper_jtag_submission_local_top
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_submission_local_mu500
+set_global_assignment -name VERILOG_FILE ../rtl/top/minesweeper_jtag_submission_local_top.v
+set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE AREA"
+
+set_global_assignment -name LAST_QUARTUS_VERSION "24.1std.0 Lite Edition"
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS_NO_OUTPUT_GND "AS INPUT TRI-STATED"
