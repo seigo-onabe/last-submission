@@ -1,0 +1,517 @@
+\documentclass[uplatex,dvipdfmx,11pt]{jsarticle}
+\usepackage[top=23mm,bottom=25mm,left=22mm,right=22mm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,array,longtable}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{pxjahyper}
+
+\definecolor{codegray}{RGB}{245,245,245}
+\definecolor{codeblue}{RGB}{0,70,130}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codegray},
+  frame=single,
+  rulecolor=\color{black!20},
+  breaklines=true,
+  columns=fullflexible
+}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\State}[1]{\textsf{#1}}
+\newcommand{\set}[1]{\left\{#1\right\}}
+
+\title{minesweeper\_solver.cpp\\実装説明書}
+\date{\today}
+
+\begin{document}
+\pagenumbering{gobble}
+\begin{titlepage}
+  \centering
+  \vspace*{\fill}
+  {\Huge\bfseries minesweeper\_solver.cpp\par}
+  \vspace{6mm}
+  {\LARGE 実装説明書\par}
+  \vspace{24mm}
+  {\large
+    決定論的推論・厳密確率計算・近似フォールバック・並列実行の解説\par}
+  \vspace{8mm}
+  {\large \today\par}
+  \vspace*{\fill}
+\end{titlepage}
+\clearpage
+\pagenumbering{arabic}
+
+\begin{abstract}
+本書は \code{minesweeper\_solver.cpp}（全1,572行）を一次資料として説明する。
+このプログラムは、複数の正解盤面を読み込み、盤面ごとにマインスイーパーをシミュレーションしながら解くソルバーである。
+確実に導けるセルは論理規則で処理し、論理で進めなくなったときだけ、制約を満たす地雷配置を列挙して各未知セルの地雷確率を求める。
+列挙が大きくなりすぎる場合には近似へ切り替え、さらに複数盤面を最大2スレッドで並列処理する。
+
+説明中の行番号は提出コードの行番号である。外部の解説メモに含まれる推測や表現ではなく、実装されている振る舞いを優先する。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{目的と全体像}
+
+\subsection{プログラムの仕事}
+\code{main} は入力から盤面群を構築し、各 \code{Board} に対して次の流れを実行する。
+
+\begin{enumerate}[label=\arabic*.]
+  \item \code{QueryEngine} が正解盤面を保持し、セル選択に対して開示済みの情報だけを返す。
+  \item \code{Solver} がセル状態と数字を保持し、確定規則を繰り返し適用する。
+  \item 確定規則で進まなければ \code{ProbabilityEngine} が次の着手候補を選ぶ。
+  \item 全安全セルを開くか、一定条件で以後の推測が採点上不利と判断されるまで繰り返す。
+  \item 開いた安全セル数・地雷数から固定小数点スコアを計算し、集計する。
+\end{enumerate}
+
+\begin{center}
+\begin{tabular}{p{34mm}p{96mm}}
+\toprule
+構成要素 & 責務 \\
+\midrule
+\code{Board} & 幅、高さ、総地雷数、盤面名、正解値を保持する不変に扱われるモデル（36--50行）。\\
+\code{FastReader} & 入力全体をメモリへ読み込み、ポインタ走査で整数・トークンを読む。\\
+\code{QueryEngine} & 正解盤面を隠し、選択されたセルと0セルの連鎖開放結果だけを返す。\\
+\code{Solver} & 状態遷移、決定論的推論、安全セルの開放、および着手制御を担う。\\
+\code{ProbabilityEngine} & 条件を満たす地雷配置を数え、未知セルの地雷確率を計算する。\\
+\code{main} & 入出力、並列処理、時間制限、集計、表示を担う。\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{セル表現と座標}
+盤面上の座標 $(x,y)$ は行優先の一次元添字
+\[
+  \mathrm{cell}=y\cdot\mathrm{width}+x
+\]
+で保持される（43--49行）。盤面の上限は $19\times19=361$ セルであり、\code{kMaxCells} は361である（31--34行）。
+正解盤面の値は \code{uint8\_t} で、\code{9} を地雷、\code{0}--\code{8} を数字として扱う。
+
+\section{入力、出力、および盤面検証}
+
+\subsection{入力元}
+オプションは \code{--details} と、任意の入力ファイルパス1個だけである（1374--1390行）。
+明示的なパスがあればそのファイルを、なければ実行時カレントディレクトリの \code{board.txt} をバイナリモードで読む（1396--1422行）。
+したがって、標準入力を既定の入力元としては使用しない。
+
+\code{readEntireFile} は1 MiBずつ読み込んで一つの \code{std::string} へ追記する（255--264行）。
+\code{FastReader} はこのバッファへのポインタを進め、空白を飛ばして整数またはトークンを切り出す。
+これにより、\code{operator>>} による逐次解析を避けている。
+
+\subsection{盤面フォーマットと検証}
+各盤面の先頭には幅、高さ、総地雷数、名前があり、続いて高さ行の数字列がある。
+\code{readBoard} は次を検証する（318--367行）。
+
+\begin{itemize}
+  \item 幅・高さが $1$ 以上かつそれぞれ19以下であること。
+  \item 地雷数が $1\le M<N$ を満たすこと。ここで $N=WH$ である。
+  \item 各行の長さが幅に一致すること。
+  \item 各文字が \code{'0'} から \code{'9'} の範囲であること。
+  \item 値9の個数がヘッダの地雷数と一致すること。
+\end{itemize}
+
+なお、数字0--8が周囲の地雷数と実際に整合するかは入力時には検証しない。
+不整合な数字は、後段の制約検査で検出される場合がある。
+
+\subsection{出力}
+通常時は、処理した盤面数、安全セルを開いた総数、地雷を開いた総数、総スコア、経過時間を出力する（1560--1567行）。
+\code{--details} を指定した場合は各盤面について解決済みか、開いた安全・地雷セル数、スコア、推測数、厳密・近似推測数も表形式で出す（1545--1558行）。
+
+\section{ゲーム管理部：\code{QueryEngine}}
+
+\subsection{情報隠蔽}
+\code{QueryEngine} は \code{const Board\& board\_} と、セルごとの開封フラグ \code{opened\_} を持つ（124--139行）。
+\code{Solver} は盤面の \code{values} に直接触れず、\code{select(cell)} が返す \code{RevealBatch} だけから状態を更新する。
+\code{Reveal} はセル添字、地雷かどうか、地雷でない場合の数字を持つ（52--63行）。
+
+\subsection{\code{select} の振る舞い}
+\code{select}（379--424行）は範囲外または既開封セルなら空のバッチを返す。
+地雷なら当該セルだけを地雷として返し、\code{opened\_mines\_} を増加する。
+安全セルなら、次の幅優先探索を実行する。
+
+\begin{enumerate}
+  \item 選択セルを固定長配列 \code{queue} に入れて開封済みにする。
+  \item キューからセルを取り出し、数字とともに \code{RevealBatch} へ追加する。
+  \item 数字が0のときだけ、周囲8近傍の未開封・非地雷セルをキューへ追加する。
+  \item 数字が1以上ならそのセルからは展開しない。
+\end{enumerate}
+
+キューは \code{std::array<int, kMaxCells>} と単調増加する \code{head}/\code{tail} で実装された固定長FIFOである。
+容量を循環利用するリングバッファではないが、各セルは高々一度しか投入されないため、最大361要素で足りる。
+連鎖開放1回の時間計算量は開いたセル数を $r$ として $O(r)$、追加メモリは最大 $O(N)$ である。
+
+\section{ソルバーの状態と制御}
+
+\subsection{セル状態}
+\code{CellState}（65--71行）には次の5状態がある。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+状態 & 意味 \\
+\midrule
+\State{kUnknown} & 未知。開く候補または地雷・安全の推論対象。\\
+\State{kQueuedSafe} & 安全と確定し、まだ \code{select} していない。\\
+\State{kOpenSafe} & 安全として開かれ、数字が \code{clues\_} に保存されている。\\
+\State{kKnownMine} & 推論で地雷と確定したが、実際には開いていない。\\
+\State{kOpenMine} & 推測等で実際に開いた地雷。\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{markSafe} は \State{kUnknown} を \State{kQueuedSafe} にして安全FIFOへ積む（1328--1335行）。
+\code{markMine} は \State{kUnknown} を \State{kKnownMine} にし、既知地雷数を増やす（1337--1348行）。
+\code{applyReveals} は \code{QueryEngine} から返った情報を反映し、推論結果と実開示が矛盾すれば例外を投げる（1129--1154行）。
+
+\subsection{主ループ}
+\code{Solver::solve}（1007--1062行）の順序は重要である。
+
+\begin{lstlisting}
+最初の隅を開く
+繰り返す:
+    安全FIFOにセルがあれば開いて、繰り返し先頭へ
+    決定論的規則を不動点まで適用する
+    新たに確定した安全セルがあれば開いて、繰り返し先頭へ
+    全安全セルを開いていれば終了
+    確率エンジンで次の未知セルを選ぶ
+    早期終了条件に該当すれば終了
+    そのセルを推測として開く
+\end{lstlisting}
+
+安全と判明したセルを全て開いてから制約を再構築するため、途中状態に対する不要な全盤面走査を抑えている。
+\code{safe\_queue\_} も固定長FIFOであり、各セルが一度しか \State{kQueuedSafe} にならないので、インデックスは最大 $N$ までしか進まない。
+
+\subsection{初期の隅開け}
+最初に左上 $(0,0)$ を開く（1076--1088行）。
+これが地雷または数字0なら直ちに通常フローへ移る。
+安全だが0でないときだけ、右上、左下、右下を順に試す（1090--1123行）。
+途中で地雷か0が出た場合もそこで止める。
+小さい盤面で隅が重複する場合、または連鎖開放済みの場合はスキップする。
+
+この初期着手と追加の隅開けは \code{guesses} には数えられる。
+ただし \code{exact\_guesses} と \code{approximate\_guesses} には加算されない。
+後者2項目は確率エンジンを通った推測だけを数える。
+
+\section{決定論的推論}
+
+\subsection{制約の構築}
+開かれた安全セル $c$ ごとに、周囲の未知セル集合を $U_c$ とし、数字から既知地雷を引いた残り地雷数を $R_c$ とする。
+\code{buildConstraint}（1207--1230行）はこれを
+\code{Constraint}（未知セル配列、未知セル数、残り地雷数、中心セル）として構築する。
+近傍数は最大8なので、未知セルは動的配列ではなく \code{array<int,8>} に保存される。
+
+\code{propagateDeterministicRules} は毎周回で全制約のスナップショットを作り、矛盾
+\[
+  R_c<0 \quad\text{または}\quad R_c>|U_c|
+\]
+を確認する（1156--1175行）。
+
+\subsection{適用順序}
+規則は以下の順で適用され、いずれかが新しい状態を作れば直ちに次の周回へ入る。
+
+\begin{enumerate}
+  \item \textbf{局所規則}（1177--1197行）：
+  \[
+  R_c=0 \Rightarrow U_c\text{ の全セルは安全},\qquad
+  R_c=|U_c| \Rightarrow U_c\text{ の全セルは地雷}.
+  \]
+  \item \textbf{全体地雷数規則}（1232--1257行）：
+  全未知セル数を $U$、全体の残り地雷数を $R=M-\mathrm{known\_mines}$ とする。
+  \[
+  R=0 \Rightarrow \text{全未知セルが安全},\qquad
+  R=U \Rightarrow \text{全未知セルが地雷}.
+  \]
+  \item \textbf{部分集合規則}（1259--1307行）：
+  \[
+  U_A\subset U_B,\quad
+  D=U_B\setminus U_A,\quad
+  R_D=R_B-R_A.
+  \]
+  \(R_D=0\) なら \(D\) を安全、\(R_D=|D|\) なら \(D\) を地雷とする。
+\end{enumerate}
+
+部分集合規則は中間的な差分制約を新たに保存せず、差分が全安全または全地雷まで確定する場合だけ状態更新する。
+2制約の比較前に中心座標差が各軸で2を超える組を飛ばす（1262--1275行）。
+各数字の影響範囲は中心からチェビシェフ距離1であるため、より離れた2セルは未知近傍を共有せず、真の包含関係を持ち得ない。
+
+\section{確率エンジン}
+
+\subsection{呼び出し条件と準備}
+\code{ProbabilityEngine::chooseCell}（685--967行）は、決定論的推論で安全セルが得られないときに呼ばれる。
+未知セルを変数 $v=0,\ldots,u-1$ に番号付けし（692--703行）、残り地雷数
+\[
+  R=M-\mathrm{known\_mines}
+\]
+を検証する。
+
+開かれた数字セルごとに、周囲の未知変数と、その数字から既知地雷を引いた地雷数を \code{RawConstraint} として作る（712--749行）。
+未知変数を含まない数字セルはこの段階では制約に入れない。
+数字に隣接する未知セルを\textbf{フロンティア}、どの数字にも隣接しない未知セルを\textbf{自由セル}と呼ぶ。
+
+より形式的には、開かれた数字セル $c$ の数字を $d_c$、既知地雷近傍の集合を $K_c$、未知近傍の変数集合を $V_c$ とする。
+未知セル $v$ に対し、$x_v=1$ を「$v$ は地雷」、$x_v=0$ を「安全」と定めると、コードが構築する制約は
+\[
+  \sum_{v\in V_c}x_v
+  =t_c,\qquad
+  t_c=d_c-|K_c|
+\]
+である。実装は $0\le t_c\le |V_c|$ を確認し、範囲外なら矛盾として例外にする。
+この制約に現れる変数だけがフロンティアであり、自由セルは局所制約を持たない。
+
+\subsection{独立成分への分解}
+同一の数字制約に入る変数同士をUnion--Findで結合する（751--755行）。
+同じ連結成分のフロンティア変数だけが同じ局所制約に依存するので、成分ごとに探索できる。
+各成分ではグローバル変数番号をローカル番号へ振り直し、制約もローカル化する（758--794行）。
+自由セルは成分に入れず、その個数だけを保持する。
+
+例えば境界変数30個を一括列挙すれば最大 $2^{30}$ 通りだが、独立な10変数の成分3個に分かれれば、粗い上界は $3\cdot2^{10}$ になる。
+もっとも、最後には総地雷数という全域制約で成分を再結合する必要がある。
+
+\subsection{成分内の厳密列挙}
+\code{enumerateComponent}（552--656行）はDFSバックトラッキングで各成分の合法配置を数える。
+変数は「関係する制約数」が多い順に安定ソートされる（565--570行）。
+成分 $i$ のローカル変数数を $n_i$、制約集合を $\mathcal{C}_i$ とすると、列挙対象は
+\[
+  \mathcal{F}_i
+  =
+  \left\{
+    \boldsymbol{x}\in\{0,1\}^{n_i}
+    \;\middle|\;
+    \forall C\in\mathcal{C}_i,\ 
+    \sum_{v\in C}x_v=t_C
+  \right\}
+\]
+である。すなわち、成分内の全 $2^{n_i}$ 通りを単純に数えるのではなく、すべての数字制約を満たす割当てだけを数える。
+
+DFSの深さ $q$ で、制約 $C$ について既に地雷と割り当てた数を $a_C(q)$、未割当変数数を $r_C(q)$ とする。
+各代入では、影響を受ける制約ごとに次の必要条件を満たさない枝を切る。
+\[
+  a_C(q)\le t_C
+  \quad\text{または}\quad
+  a_C(q)+r_C(q)\ge t_C.
+\]
+前者に反した枝は地雷を置き過ぎており、後者に反した枝は残りを全て地雷にしても不足する。
+実装では候補 $x_v\in\{0,1\}$ を一時代入し、関係する制約の \code{assigned\_mines} と \code{unassigned} だけを差分更新して判定し、再帰から戻ると元へ復元する（605--638行）。
+また、成分内の地雷数が盤面全体の残り地雷数 $R$ を超えた枝も捨てる（594--596行）。
+
+合法な葉に達したとき、成分内の地雷数を $k$ とする。
+この葉は地雷配置1通りを表すため、重み付けや別の計算は行わず、まず
+\[
+  \code{ways\_by\_mines}[k]\mathrel{+}=1.0
+\]
+を実行する（597--601行）。したがって、最終的なこの配列の値は
+\[
+  A_i(k)
+  =
+  \left|\left\{
+    \boldsymbol{x}\in\mathcal{F}_i
+    \mid \sum_vx_v=k
+  \right\}\right|
+\]
+となる。
+続いて、その完全割当てで地雷にした各局所変数 $v$ についてだけ
+\[
+  \code{mine\_ways}[v][k]\mathrel{+}=1.0
+\]
+を実行する。ゆえに、その配列の最終値は局所変数 $v$ が地雷である合法配置数
+\[
+  M_i(v,k)
+  =
+  \left|\left\{
+    \boldsymbol{x}\in\mathcal{F}_i
+    \mid x_v=1,\ \sum_wx_w=k
+  \right\}\right|
+\]
+である。
+
+探索ノード上限は通常2,000,000である。
+ただし盤面が200セル超かつ地雷密度が20\%以上の場合は75,000へ下げる（438--460行）。
+上限を超えると当該成分の \code{exact} を偽にし、列挙結果を破棄する。
+
+\subsection{厳密な全域確率}
+全成分を厳密に列挙できた場合、成分の地雷数分布を畳み込む。
+\code{convolve} は地雷数を添字とする配列の積
+\[
+  (a*b)[k]=\sum_{j=0}^{k}a[j]b[k-j]
+\]
+を、残り地雷数 $R$ より大きな添字を切り捨てて計算する（532--550行）。
+
+成分 $i$ の左側・右側の分布をそれぞれ \code{prefix}、\code{suffix} として作る（811--826行）。
+生成関数で書けば、成分 $i$ の分布は
+\[
+  G_i(z)=\sum_{k=0}^{n_i}A_i(k)z^k
+\]
+であり、全成分の分布は $\prod_iG_i(z)$ である。
+コードの畳み込みは、この多項式積の係数を配列として求めている。
+特に
+\[
+  P_i(z)=\prod_{j<i}G_j(z),\qquad
+  Q_i(z)=\prod_{j>i}G_j(z)
+\]
+が、それぞれ \code{prefix[i]} と \code{suffix[i+1]} に対応する。
+
+自由セル $f$ 個にちょうど $k$ 個の地雷を置く配置数は二項係数
+\[
+  B_f(k)=\binom{f}{k}
+\]
+であり、パスカルの三角形をキャッシュした \code{binomialTable} から得る（507--530行）。
+これは生成関数 $(1+z)^f$ の $z^k$ の係数でもある。
+
+全有効配置数は、係数抽出として
+\[
+  W_{\mathrm{total}}
+  =
+  [z^R]\left((1+z)^f\prod_iG_i(z)\right)
+\]
+であり、実装上は次の和になる。
+\[
+  W_{\mathrm{total}}
+  =\sum_k A_{\mathrm{all}}(k)\binom{f}{R-k}
+\]
+ここで $A_{\mathrm{all}}(k)=[z^k]\prod_iG_i(z)$ である（838--848行）。
+
+成分 $i$ の変数 $v$ について、成分 $i$ 以外と自由セルを合成した背景分布を
+\[
+  O_i(q)
+  =
+  [z^q]\left((1+z)^fP_i(z)Q_i(z)\right)
+\]
+とする。このとき、$v$ が地雷で全体の地雷数が $R$ となる配置数と、最終確率は
+\[
+  W_{\mathrm{mine}}(v)
+  =\sum_{k=0}^{n_i}M_i(v,k)O_i(R-k),\qquad
+  P(v)=\frac{W_{\mathrm{mine}}(v)}{W_{\mathrm{total}}}.
+\]
+この計算は850--880行に実装されている。
+自由セルは対称である。
+自由セル $v$ を地雷に固定すると、残り $f-1$ セルから $R-k-1$ 個の地雷を置くため、
+\[
+  P_{\mathrm{free}}
+  =
+  \frac{
+    \sum_k A_{\mathrm{all}}(k)\binom{f-1}{R-k-1}
+  }{W_{\mathrm{total}}}
+\]
+となる（883--902行）。
+この値をすべての自由セルに設定する。
+
+\subsection{近似フォールバック}
+いずれかの成分で列挙が中断されると、\code{all\_exact} は偽になり、成分間の厳密合成は\textbf{全て}行わない（904--943行）。
+まず全未知セルに対し、盤面全体だけから得られる基準値
+\[
+  p_0=\frac{R}{u}
+\]
+を設定する。ここで $u$ は未知セル数である。
+
+列挙に成功した成分では成分内の周辺化確率
+\[
+  P(v)=
+  \frac{\sum_kM_i(v,k)}{\sum_kA_i(k)}
+\]
+を使う。これはその成分だけの合法配置を等重みとみなした確率であり、他成分や自由セルとの総地雷数の整合は反映しない。
+
+中断した成分では、変数 $v$ が属する制約の集合を $\mathcal{C}(v)$ として、各局所制約 $C$ の残り地雷密度
+\[
+  \rho_C=\frac{t_C}{|V_C|}
+\]
+の算術平均
+\[
+  P(v)=
+  \frac{1}{|\mathcal{C}(v)|}
+  \sum_{C\in\mathcal{C}(v)}\rho_C
+\]
+を使う。実装の \code{ratio\_sum} と \code{ratio\_count} がこの式に対応する（924--941行）。
+どの制約にも属さない自由セルは更新されず、初期値 $p_0=R/u$ のままである。
+
+したがってフォールバック時の確率は、全体制約を厳密に満たす事後確率ではない。
+探索上限を守りつつ、完了した成分については列挙結果を残し、未完了成分についても数字セル周辺の局所情報を反映するための実用的な近似である。
+
+\subsection{着手選択}
+未知セルから地雷確率が最小のセルを選ぶ（945--966行）。
+確率差が $10^{-18}$ 以内なら、未知近傍数が\emph{少ない}セルを選ぶ。
+このタイブレークは \code{unknownNeighborCount}（658--681行）で計算される。
+
+\section{採点上の早期停止}
+\code{solve} は確率候補を得た後、次の条件を全て満たす場合だけ、推測を打ち切る選択肢を検討する（1039--1055行）。
+\[
+  N>200,\qquad 100M<20N,\qquad
+  2\cdot\mathrm{opened\_safe}\ge N-M.
+\]
+つまり大盤面・低地雷密度・安全セルの半分以上を既に開いた局面に限る。
+候補セルの未知近傍数を $d$、地雷確率を $p$ とし、
+\[
+  F=0.75d,\qquad
+  A=M-Np+M(1-p)F
+\]
+を計算する。$A<0$ なら推測せずにその盤面を終了する。
+これは完全解を常に優先する方針ではなく、地雷を踏む不利益と、成功時に期待する追加開放の効果を近似的に比較して、スコアを守るヒューリスティックである。
+\code{0.75} はマクロ \code{MINESWEEPER\_INFORMATION\_K\_SCALE} で上書きできる（446--448行）。
+
+\section{スコア計算}
+\code{calculateScaledScore}（976--985行）は、全安全セル数を $S=N-M$、開いた安全セル数を $s$、開いた地雷数を $m$ として
+\[
+  \mathrm{score\_scaled}
+  =
+  \frac{(sM-mS)\cdot10{,}000}{SM}
+  =
+  \left(\frac{s}{S}-\frac{m}{M}\right)\cdot10{,}000
+\]
+を整数演算で求める。
+実際の除算はC++の符号付き整数除算なので、負数を含めて\textbf{0方向への切り捨て}である。
+\code{printScaledScore} は符号を先に出し、絶対値の整数部と4桁ゼロ埋めの小数部を表示する（987--995行）。
+
+\section{並列実行とエラー処理}
+
+\subsection{ワーカーの構成}
+\code{hardware\_concurrency()} がマクロ \code{MINESWEEPER\_THREADS}（既定2）以上なら2スレッド、そうでなければ1スレッドとする（1432--1441行）。
+各ワーカーは
+\[
+  \code{next\_board.fetch\_add(1, memory\_order\_relaxed)}
+\]
+で次の盤面番号を原子的に取得する（1450--1464行）。
+盤面ごとの計算量の差に応じて次の仕事を取りに行く、動的なタスク分配である。
+
+各ワーカーは開始時刻から1750 ms以上経過していれば、新しい盤面に着手せず終了する（1367--1372行、1452--1458行）。
+これは2秒の実行時間制限を想定し、集計・出力の余裕を残すソフトリミットである。
+すでに開始した盤面の \code{solve} を途中中断する仕組みではない。
+
+\subsection{データ競合を避ける設計}
+\code{parallel\_results} と \code{parallel\_processed} は盤面数で事前確保される（1443--1445行）。
+各ワーカーは自身が取得した、他と重複しない添字だけに書く。
+\code{boards} は以後読み取り専用である。
+最初の例外だけは \code{worker\_error\_mutex} で保護した \code{exception\_ptr} に保存し、\code{stop\_workers} を真にして他のワーカーを停止へ向かわせる（1497--1503行）。
+\code{join} 後にメインスレッドが例外を再送出する（1511--1516行）。
+
+ワーカー終了後の合計と表示は盤面番号順にメインスレッドだけが行う（1518--1539行）。
+よって並列に計算しても出力の並びは決定的である。
+
+\section{計算量と実装上の特徴}
+
+\begin{longtable}{p{36mm}p{91mm}}
+\toprule
+項目 & 性質 \\
+\midrule
+\endhead
+盤面サイズ & 最大361セル。ソルバーの状態・局所制約・安全FIFOには主に固定長配列を使う。\\
+決定論的推論 & 1周回で盤面・制約を走査する。部分集合規則は近傍の制約対に限るが、最悪では制約数の二乗比較を含む。\\
+確率列挙 & 成分ごとには指数時間になり得るため、次数順の枝刈りとノード上限を設ける。\\
+全域合成 & 成分分布と自由セル分布を、最大残り地雷数までの畳み込みで合成する。\\
+メモリ配分 & \code{ProbabilityEngine} の成分、制約、分布、DFS状態には \code{vector} を用いる。一方、盤面サイズが上限固定のホットな基礎状態には \code{array} を用いる。\\
+\bottomrule
+\end{longtable}
+
+\section{コンパイル方法}
+本書はup\LaTeX{}と\code{dvipdfmx}を想定する。次の2段階を2回実行すれば、目次を含めてPDFを生成できる。
+
+\begin{lstlisting}
+uplatex -interaction=nonstopmode minesweeper_solver_report.tex
+dvipdfmx minesweeper_solver_report.dvi
+\end{lstlisting}
+
+例えば \code{report} ディレクトリでこの組を2回実行する。
+
+\end{document}
