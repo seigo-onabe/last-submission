@@ -374,6 +374,47 @@ DFSの深さ $q$ で、制約 $C$ について既に地雷と割り当てた数�
 \]
 ここで $A_{\mathrm{all}}(k)=[z^k]\prod_iG_i(z)$ である（838--848行）。
 
+\subsubsection{Prefix / suffix DP の具体的な計算}
+成分数を $C$ とし、配列の添字を地雷数とする。
+コードはまず
+\[
+\begin{aligned}
+  \mathrm{prefix}[0] &= [1],&
+  \mathrm{prefix}[i+1] &= \mathrm{prefix}[i]*A_i,\\
+  \mathrm{suffix}[C] &= [1],&
+  \mathrm{suffix}[i] &= A_i*\mathrm{suffix}[i+1]
+\end{aligned}
+\]
+を構築する（811--826行）。
+ここで $[1]$ は「地雷を0個置く方法が1通り」という長さ1の配列である。
+したがって \code{prefix[i]} は成分 $0,\ldots,i-1$、\code{suffix[i+1]} は成分 $i+1,\ldots,C-1$ の地雷数分布を表す。
+
+たとえば成分が $A_0,A_1,A_2$ の3個なら、
+\[
+\begin{array}{lll}
+  \mathrm{prefix}[0]=[1],&
+  \mathrm{prefix}[1]=A_0,&
+  \mathrm{prefix}[2]=A_0*A_1,\\
+  \mathrm{prefix}[3]=A_0*A_1*A_2,&&\\
+  \mathrm{suffix}[3]=[1],&
+  \mathrm{suffix}[2]=A_2,&
+  \mathrm{suffix}[1]=A_1*A_2,\quad
+  \mathrm{suffix}[0]=A_0*A_1*A_2.
+\end{array}
+\]
+成分1のセルを評価するときは、成分1自身を除いた
+\[
+  B_f*A_0*A_2
+  =
+  B_f*\mathrm{prefix}[1]*\mathrm{suffix}[2]
+\]
+だけを背景分布として使えばよい。
+これが、各成分について「他の全成分の積」を最初から作り直さずに済む理由である。
+
+各畳み込みの配列長は残り地雷数 $R$ により高々 $R+1$ に制限される。
+そのため畳み込み1回は $O(R^2)$、prefix・suffixの構築と各成分の背景分布の構築を合わせた全体は $O(CR^2)$ である。
+実装では prefix に $C$ 回、suffix に $C$ 回、各成分の背景分布に2回ずつ、合計およそ $4C$ 回の畳み込みを行う。
+
 成分 $i$ の変数 $v$ について、成分 $i$ 以外と自由セルを合成した背景分布を
 \[
   O_i(q)
